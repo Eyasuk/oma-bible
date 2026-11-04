@@ -6,6 +6,7 @@ use std::{
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use oma_bible_core::{
     bible::{BibleBook, Chapter, Library, Translation},
+    fonts,
     remote::{
         DownloadControl, RemoteCatalog, RemoteTranslation, download_translation, save_download,
     },
@@ -23,6 +24,7 @@ pub(crate) enum WorkerMessage {
 pub(crate) struct DownloadDone {
     pub id: String,
     pub name: String,
+    pub font_notice: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1150,10 +1152,13 @@ impl App {
         thread::spawn(move || {
             let result = download_translation(&id, &control)
                 .and_then(|translation| {
+                    let sample = fonts::sample_text(&translation);
                     save_download(&translation, &id)?;
+                    let font_notice = fonts::prepare_for_text(&sample, true);
                     Ok(DownloadDone {
                         id: id.clone(),
                         name: translation.name,
+                        font_notice,
                     })
                 })
                 .map_err(|error| error.to_string());
@@ -1194,8 +1199,12 @@ impl App {
                             }
                             self.screen = Screen::Reader;
                             self.save_position();
-                            self.message =
-                                Some(format!("Added {} from bible.helloao.org", done.name));
+                            let mut message = format!("Added {} from bible.helloao.org", done.name);
+                            if let Some(notice) = done.font_notice {
+                                message.push_str("  ·  ");
+                                message.push_str(&notice);
+                            }
+                            self.message = Some(message);
                         }
                         Err(error) => {
                             self.message = Some(if was_cancelled {

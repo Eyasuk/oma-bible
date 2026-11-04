@@ -55,6 +55,10 @@ fn build_ui(application: &adw::Application) {
     wire_signals(&ui);
     ui.initial_load();
 
+    if let Some(notice) = ui.prepare_fonts() {
+        ui.widgets.status.set_text(&notice);
+    }
+
     let has_translations = ui.has_translations();
     let needs_theme_picker = ui.needs_theme_picker();
 

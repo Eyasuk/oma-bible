@@ -8,7 +8,7 @@ use std::{
 use crossterm::event::{self, Event, KeyEventKind};
 use oma_bible_core::{
     bible::Library,
-    data_dir,
+    data_dir, fonts,
     storage::{Bookmarks, Settings},
     theme::ThemeCatalog,
 };
@@ -51,6 +51,13 @@ fn run() -> Result<(), Box<dyn Error>> {
         // Off Omarchy there is no system theme to follow, so show the catalog
         // straight away instead of hiding it behind a key.
         app.open_themes(Screen::Reader);
+    }
+
+    if let Some(translation) = app.translation() {
+        let sample = fonts::sample_text(translation);
+        if let Some(notice) = fonts::prepare_for_text(&sample, false) {
+            app.message = Some(notice);
+        }
     }
 
     let mut terminal = ratatui::init();

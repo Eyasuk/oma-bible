@@ -74,7 +74,7 @@ pub(crate) fn theme_css(theme: &Theme, font_size: u32) -> String {
 .oma-window, .oma-root {{
     background-color: {background};
     color: {foreground};
-    font-family: "Noto Sans", "Noto Sans Ethiopic", sans-serif;
+    font-family: "Noto Sans", "Noto Sans Ethiopic Condensed", "Noto Sans Ethiopic", sans-serif;
 }}
 headerbar {{
     background-color: {dark_background};
@@ -88,13 +88,13 @@ headerbar {{
 }}
 .oma-title {{
     color: {accent};
-    font-family: "IBM Plex Mono", "Noto Sans Mono", "Noto Sans Ethiopic", monospace;
+    font-family: "IBM Plex Mono", "Noto Sans Mono", "Noto Sans Ethiopic Condensed", "Noto Sans Ethiopic", monospace;
     font-size: 12px;
     font-weight: 700;
 }}
 .oma-badge, .oma-muted {{
     color: {muted};
-    font-family: "IBM Plex Mono", "Noto Sans Mono", "Noto Sans Ethiopic", monospace;
+    font-family: "IBM Plex Mono", "Noto Sans Mono", "Noto Sans Ethiopic Condensed", "Noto Sans Ethiopic", monospace;
     font-size: 11px;
 }}
 .oma-sidebar {{
@@ -110,7 +110,7 @@ headerbar {{
 }}
 .oma-section {{
     color: {muted};
-    font-family: "IBM Plex Mono", "Noto Sans Mono", "Noto Sans Ethiopic", monospace;
+    font-family: "IBM Plex Mono", "Noto Sans Mono", "Noto Sans Ethiopic Condensed", "Noto Sans Ethiopic", monospace;
     font-size: 10px;
     font-weight: 700;
 }}
@@ -147,7 +147,7 @@ headerbar {{
 }}
 .oma-heading {{
     color: {accent};
-    font-family: "Noto Serif", "Noto Serif Ethiopic", serif;
+    font-family: "Noto Serif", "Noto Serif Ethiopic Condensed", "Noto Serif Ethiopic", serif;
     font-size: 26px;
     font-weight: 700;
 }}
@@ -167,7 +167,7 @@ headerbar {{
 }}
 .oma-verse-number {{
     color: {muted};
-    font-family: "IBM Plex Mono", "Noto Sans Mono", "Noto Sans Ethiopic", monospace;
+    font-family: "IBM Plex Mono", "Noto Sans Mono", "Noto Sans Ethiopic Condensed", "Noto Sans Ethiopic", monospace;
     font-size: 11px;
     font-weight: 700;
     margin-top: 4px;
@@ -177,7 +177,7 @@ headerbar {{
 }}
 .oma-verse-text {{
     color: {foreground};
-    font-family: "Noto Serif", "Noto Serif Ethiopic", serif;
+    font-family: "Noto Serif", "Noto Serif Ethiopic Condensed", "Noto Serif Ethiopic", serif;
     font-size: {font_size}px;
 }}
 .oma-footer {{
@@ -235,7 +235,7 @@ headerbar {{
 }}
 .oma-bookmark-reference {{
     color: {foreground};
-    font-family: "Noto Serif", "Noto Serif Ethiopic", serif;
+    font-family: "Noto Serif", "Noto Serif Ethiopic Condensed", "Noto Serif Ethiopic", serif;
     font-size: 15px;
     font-weight: 700;
 }}
@@ -252,7 +252,7 @@ headerbar {{
 }}
 .oma-help {{
     color: {foreground};
-    font-family: "IBM Plex Mono", "Noto Sans Mono", "Noto Sans Ethiopic", monospace;
+    font-family: "IBM Plex Mono", "Noto Sans Mono", "Noto Sans Ethiopic Condensed", "Noto Sans Ethiopic", monospace;
     font-size: 12px;
 }}
 .oma-note-entry {{

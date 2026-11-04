@@ -63,12 +63,19 @@ Inside the Bible API browser: `j` / `k` select a translation, `Enter`
 downloads it, `/` searches, `l` changes the language filter, `r` refreshes the
 catalogue, and `Esc` cancels an in-progress download or closes the window.
 
-### Amharic in the terminal
+### Fonts for downloaded languages
 
-A terminal draws every character on a fixed cell grid, but most monospace fonts
-hand Ethiopic glyphs to a proportional fallback. The TUI therefore puts one
-blank cell between adjacent Ethiopic letters, so Amharic words stay legible
-instead of touching. The GTK app uses Noto Sans/Serif Ethiopic directly.
+When a translation is downloaded, Oma Bible checks whether the system has a
+font for its script. Ethiopic (Amharic, Tigrinya, Ge'ez) is set up
+automatically: if no Ethiopic font is installed, the app downloads Noto Sans
+Ethiopic Condensed into `~/.local/share/fonts/oma-bible/` and refreshes the font cache.
+It also writes
+`~/.config/fontconfig/conf.d/60-oma-bible-ethiopic.conf`, which asks
+fontconfig to prefer the narrower condensed face so Ethiopic letters fit the
+fixed cell grid of a terminal. Restart the terminal once after the first
+Amharic download to pick up the new font. Other scripts use the fonts already
+installed by the system; when one is missing the app names the script so the
+right package can be installed.
 
 ## Themes
 

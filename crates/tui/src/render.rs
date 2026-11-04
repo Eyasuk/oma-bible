@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use oma_bible_core::theme::Rgb;
 use oma_bible_core::user_data_dir;
 use ratatui::{
@@ -65,7 +63,7 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App) {
     if let Some(translation) = app.translation() {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
-            ethiopic_spaced(&translation.name),
+            translation.name.as_str(),
             Style::new()
                 .fg(color(theme.foreground))
                 .add_modifier(Modifier::BOLD),
@@ -94,7 +92,7 @@ fn render_books(frame: &mut Frame, area: Rect, app: &App) {
             translation
                 .books
                 .iter()
-                .map(|book| ListItem::new(ethiopic_spaced(&book.name).into_owned()))
+                .map(|book| ListItem::new(book.name.as_str()))
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
@@ -173,8 +171,7 @@ fn render_verses(frame: &mut Frame, area: Rect, app: &mut App) {
             let width = (inner.width as usize)
                 .saturating_sub(prefix.chars().count())
                 .max(1);
-            let verse = ethiopic_spaced(verse);
-            let wrapped = textwrap::wrap(verse.as_ref(), width);
+            let wrapped = textwrap::wrap(verse, width);
 
             verse_starts.push(lines.len());
             for (part_index, part) in wrapped.iter().enumerate() {
@@ -247,7 +244,7 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
         }
     };
     let text = match &app.message {
-        Some(message) => format!(" {}  ·  {hints}", ethiopic_spaced(message)),
+        Some(message) => format!(" {message}  ·  {hints}"),
         None => format!(" {hints}"),
     };
 
@@ -259,48 +256,9 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
 
 fn verse_title(app: &App) -> String {
     match (app.book(), app.chapter()) {
-        (Some(book), Some(chapter)) => {
-            format!(" {} {} ", ethiopic_spaced(&book.name), chapter.number)
-        }
+        (Some(book), Some(chapter)) => format!(" {} {} ", book.name, chapter.number),
         _ => " Verses ".to_string(),
     }
-}
-
-/// Insert a blank cell between Ethiopic letters.
-///
-/// Many terminal fallback fonts draw Ethiopic glyphs wider than the single
-/// cell the terminal reserves for them, which makes neighbouring characters
-/// touch. A real space is the only spacing a terminal grid can add, so this
-/// trades a little horizontal room for legibility.
-fn ethiopic_spaced(text: &str) -> Cow<'_, str> {
-    if !text.chars().any(is_ethiopic) {
-        return Cow::Borrowed(text);
-    }
-
-    let mut spaced = String::with_capacity(text.len() * 2);
-    let mut previous_ethiopic = false;
-
-    for character in text.chars() {
-        let ethiopic = is_ethiopic(character);
-        if previous_ethiopic && ethiopic {
-            spaced.push(' ');
-        }
-        spaced.push(character);
-        previous_ethiopic = ethiopic;
-    }
-
-    Cow::Owned(spaced)
-}
-
-fn is_ethiopic(character: char) -> bool {
-    matches!(
-        character,
-        '\u{1200}'..='\u{135A}'
-            | '\u{1369}'..='\u{137C}'
-            | '\u{1380}'..='\u{1399}'
-            | '\u{2D80}'..='\u{2DDF}'
-            | '\u{AB00}'..='\u{AB2F}'
-    )
 }
 
 fn panel_block(
@@ -389,11 +347,7 @@ fn render_screen_header(frame: &mut Frame, area: Rect, app: &App) {
     if let Some(translation) = app.translation() {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
-            format!(
-                "{} ({})",
-                ethiopic_spaced(&translation.name),
-                translation.abbreviation
-            ),
+            format!("{} ({})", translation.name, translation.abbreviation),
             Style::new().fg(color(theme.muted)),
         ));
     }
@@ -429,7 +383,7 @@ fn render_themes(frame: &mut Frame, area: Rect, app: &App) {
             let mut line = vec![
                 Span::styled(marker, Style::new().fg(color(theme.accent))),
                 Span::styled(
-                    ethiopic_spaced(&candidate.name).into_owned(),
+                    candidate.name.clone(),
                     Style::new()
                         .fg(color(theme.foreground))
                         .add_modifier(Modifier::BOLD),
@@ -504,7 +458,7 @@ fn render_translations(frame: &mut Frame, area: Rect, app: &App) {
                 .sum::<usize>();
             ListItem::new(Line::from(vec![
                 Span::styled(
-                    ethiopic_spaced(&translation.name).into_owned(),
+                    translation.name.clone(),
                     Style::new()
                         .fg(color(theme.foreground))
                         .add_modifier(Modifier::BOLD),
@@ -516,7 +470,7 @@ fn render_translations(frame: &mut Frame, area: Rect, app: &App) {
                 Span::styled(
                     format!(
                         "  ·  {}  ·  {} books, {} chapters",
-                        ethiopic_spaced(&translation.language),
+                        translation.language,
                         translation.books.len(),
                         chapters
                     ),
@@ -529,7 +483,7 @@ fn render_translations(frame: &mut Frame, area: Rect, app: &App) {
     let (note_area, list_area) = filter_note(area, &app.translation_query);
     if let Some(note_area) = note_area {
         frame.render_widget(
-            Paragraph::new(ethiopic_spaced(&app.translation_query).into_owned())
+            Paragraph::new(app.translation_query.clone())
                 .style(Style::new().fg(color(theme.accent))),
             note_area,
         );
@@ -553,11 +507,7 @@ fn render_download(frame: &mut Frame, area: Rect, app: &App) {
     if let Some(download) = &app.download {
         note_lines.push(Line::from(vec![
             Span::styled(
-                format!(
-                    "Downloading {} ({}) ",
-                    ethiopic_spaced(&download.name),
-                    download.id
-                ),
+                format!("Downloading {} ({}) ", download.name, download.id),
                 Style::new()
                     .fg(color(theme.foreground))
                     .add_modifier(Modifier::BOLD),
@@ -599,10 +549,7 @@ fn render_download(frame: &mut Frame, area: Rect, app: &App) {
                 Style::new().fg(color(theme.foreground)),
             ),
             Span::styled(
-                format!(
-                    "  ·  language: {}",
-                    ethiopic_spaced(&language_filter_label(app))
-                ),
+                format!("  ·  language: {}", language_filter_label(app)),
                 Style::new().fg(color(theme.accent)),
             ),
             Span::styled(
@@ -621,7 +568,7 @@ fn render_download(frame: &mut Frame, area: Rect, app: &App) {
         let query = app.download_query.trim();
         if !query.is_empty() && app.download.is_none() {
             note_lines.push(Line::from(Span::styled(
-                format!("Search: {}", ethiopic_spaced(query)),
+                format!("Search: {query}"),
                 Style::new().fg(color(theme.muted)),
             )));
         }
@@ -638,7 +585,7 @@ fn render_download(frame: &mut Frame, area: Rect, app: &App) {
         .map(|translation| {
             let mut spans = vec![
                 Span::styled(
-                    ethiopic_spaced(translation.title()).into_owned(),
+                    translation.title().to_string(),
                     Style::new()
                         .fg(color(theme.foreground))
                         .add_modifier(Modifier::BOLD),
@@ -653,7 +600,7 @@ fn render_download(frame: &mut Frame, area: Rect, app: &App) {
                 && translation.english_name.trim() != translation.title()
             {
                 spans.push(Span::styled(
-                    format!("  ·  {}", ethiopic_spaced(translation.english_name.trim())),
+                    format!("  ·  {}", translation.english_name.trim()),
                     Style::new().fg(color(theme.muted)),
                 ));
             }
@@ -661,7 +608,7 @@ fn render_download(frame: &mut Frame, area: Rect, app: &App) {
             spans.push(Span::styled(
                 format!(
                     "  ·  {}  ·  {} books  ·  {} verses",
-                    ethiopic_spaced(translation.language_label()),
+                    translation.language_label(),
                     translation.number_of_books,
                     translation.total_number_of_verses
                 ),
@@ -699,7 +646,7 @@ fn render_languages(frame: &mut Frame, area: Rect, app: &App) {
             ListItem::new(Line::from(vec![
                 Span::styled(marker, Style::new().fg(color(theme.accent))),
                 Span::styled(
-                    ethiopic_spaced(&option.label).into_owned(),
+                    option.label.clone(),
                     Style::new()
                         .fg(color(theme.foreground))
                         .add_modifier(Modifier::BOLD),
@@ -719,8 +666,7 @@ fn render_languages(frame: &mut Frame, area: Rect, app: &App) {
     let (note_area, list_area) = filter_note(area, &app.language_query);
     if let Some(note_area) = note_area {
         frame.render_widget(
-            Paragraph::new(ethiopic_spaced(&app.language_query).into_owned())
-                .style(Style::new().fg(color(theme.accent))),
+            Paragraph::new(app.language_query.clone()).style(Style::new().fg(color(theme.accent))),
             note_area,
         );
     }
@@ -744,10 +690,9 @@ fn render_study(frame: &mut Frame, area: Rect, app: &App) {
         .iter()
         .rev()
         .map(|bookmark| {
-            let reference = ethiopic_spaced(&bookmark.reference()).into_owned();
             let mut line = vec![
                 Span::styled(
-                    reference,
+                    bookmark.reference(),
                     Style::new()
                         .fg(color(theme.foreground))
                         .add_modifier(Modifier::BOLD),
@@ -760,7 +705,7 @@ fn render_study(frame: &mut Frame, area: Rect, app: &App) {
 
             if !bookmark.note.is_empty() {
                 line.push(Span::styled(
-                    format!("  ·  {}", ethiopic_spaced(&bookmark.note)),
+                    format!("  ·  {}", bookmark.note),
                     Style::new().fg(color(theme.muted)),
                 ));
             }
@@ -784,21 +729,12 @@ fn render_settings(frame: &mut Frame, area: Rect, app: &App) {
     let theme = app.theme();
     let translation = app
         .translation()
-        .map(|translation| {
-            format!(
-                "{} ({})",
-                ethiopic_spaced(&translation.name),
-                translation.abbreviation
-            )
-        })
+        .map(|translation| format!("{} ({})", translation.name, translation.abbreviation))
         .unwrap_or_else(|| String::from("None"));
     let downloads = user_data_dir().display().to_string();
 
     let rows: [(String, String); 7] = [
-        (
-            String::from("Theme"),
-            ethiopic_spaced(&app.themes.active().name).into_owned(),
-        ),
+        (String::from("Theme"), app.themes.active().name.clone()),
         (
             String::from("Verse numbers"),
             String::from(if app.settings.show_verse_numbers {
@@ -976,7 +912,7 @@ fn render_screen_footer(frame: &mut Frame, area: Rect, app: &App) {
         Screen::Reader => "",
     };
     let text = match &app.message {
-        Some(message) => format!(" {}  ·  {hints}", ethiopic_spaced(message)),
+        Some(message) => format!(" {message}  ·  {hints}"),
         None => format!(" {hints}"),
     };
 
@@ -999,7 +935,7 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App, prompt: &crate::app::I
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
-                ethiopic_spaced(&prompt.value).into_owned(),
+                prompt.value.clone(),
                 Style::new().fg(color(theme.bright_foreground)),
             ),
             Span::styled("▏", Style::new().fg(color(theme.accent))),
@@ -1046,24 +982,5 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.1} KiB", bytes as f64 / KIB as f64)
     } else {
         format!("{bytes} B")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ethiopic_letters_get_room_to_breathe() {
-        assert_eq!(ethiopic_spaced("መጽሐፍ"), "መ ጽ ሐ ፍ");
-        assert_eq!(ethiopic_spaced("ጸጋ።"), "ጸ ጋ።");
-    }
-
-    #[test]
-    fn latin_text_is_left_alone() {
-        assert!(matches!(
-            ethiopic_spaced("In the beginning"),
-            Cow::Borrowed("In the beginning")
-        ));
     }
 }

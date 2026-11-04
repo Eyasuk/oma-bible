@@ -9,6 +9,7 @@ use adw::prelude::*;
 use gtk::{gdk, glib};
 use oma_bible_core::{
     bible::Library,
+    fonts,
     remote::{DownloadControl, RemoteCatalog, download_translation, save_download},
     storage::{Bookmark, Bookmarks, Settings},
     theme::ThemeCatalog,
@@ -24,6 +25,7 @@ pub(crate) enum WorkerMessage {
 pub(crate) struct DownloadDone {
     pub id: String,
     pub name: String,
+    pub font_notice: Option<String>,
 }
 
 pub(crate) struct Initial {
@@ -292,6 +294,16 @@ impl Ui {
 
     pub(crate) fn has_translations(&self) -> bool {
         !self.state.borrow().library.translations().is_empty()
+    }
+
+    /// Set up fonts for the selected translation without downloading anything.
+    pub(crate) fn prepare_fonts(&self) -> Option<String> {
+        let sample = {
+            let state = self.state.borrow();
+            state.translation().map(fonts::sample_text)
+        }?;
+
+        fonts::prepare_for_text(&sample, false)
     }
 
     pub(crate) fn needs_theme_picker(&self) -> bool {
@@ -1660,10 +1672,13 @@ impl Ui {
         thread::spawn(move || {
             let result = download_translation(&id, &control)
                 .and_then(|translation| {
+                    let sample = fonts::sample_text(&translation);
                     save_download(&translation, &id)?;
+                    let font_notice = fonts::prepare_for_text(&sample, true);
                     Ok(DownloadDone {
                         id: id.clone(),
                         name: translation.name,
+                        font_notice,
                     })
                 })
                 .map_err(|error| error.to_string());
@@ -1759,10 +1774,12 @@ impl Ui {
                             self.refresh_all();
                             self.refresh_bookmarks_panel();
                             self.save_position();
-                            self.widgets
-                                .download
-                                .progress
-                                .set_text(&format!("Added {} from bible.helloao.org", done.name));
+                            let mut message = format!("Added {} from bible.helloao.org", done.name);
+                            if let Some(notice) = done.font_notice {
+                                message.push_str("  ·  ");
+                                message.push_str(&notice);
+                            }
+                            self.widgets.download.progress.set_text(&message);
                             self.widgets.status.set_text(&format!(
                                 "Added {} · choose another translation or close this window",
                                 done.name
