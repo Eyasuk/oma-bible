@@ -174,13 +174,10 @@ fn build_widgets(application: &adw::Application, themes: &ThemeCatalog) -> Widge
 
     let status = gtk::Label::builder().xalign(0.0).hexpand(true).build();
     status.add_css_class("oma-muted");
-    let theme_label = gtk::Label::builder().xalign(1.0).build();
-    theme_label.add_css_class("oma-muted");
 
     let footer = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     footer.add_css_class("oma-footer");
     footer.append(&status);
-    footer.append(&theme_label);
 
     let reading = gtk::Box::new(gtk::Orientation::Vertical, 0);
     reading.append(&reading_scroll);
@@ -254,7 +251,6 @@ fn build_widgets(application: &adw::Application, themes: &ThemeCatalog) -> Widge
         verses,
         heading,
         status,
-        theme_label,
         provider: gtk::CssProvider::new(),
         split,
         bookmarks_list,
@@ -313,7 +309,7 @@ fn build_settings(window: &adw::ApplicationWindow, themes: &ThemeCatalog) -> Set
     let theme_dropdown = if themes.is_on_omarchy() {
         let row = adw::ActionRow::builder()
             .title("Theme")
-            .subtitle(format!("Following Omarchy · {}", themes.active().name))
+            .subtitle("Following the Omarchy system theme")
             .build();
         appearance.add(&row);
         None
@@ -680,6 +676,12 @@ fn wire_keys(ui: &Rc<Ui>) {
     glib::timeout_add_local(Duration::from_millis(120), move || {
         ui_handle.poll_worker();
         ui_handle.update_download_progress();
+        glib::ControlFlow::Continue
+    });
+
+    let ui_handle = ui.clone();
+    glib::timeout_add_seconds_local(1, move || {
+        ui_handle.refresh_theme();
         glib::ControlFlow::Continue
     });
 }

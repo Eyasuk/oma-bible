@@ -266,6 +266,13 @@ impl App {
         self.themes.active()
     }
 
+    /// Follow an Omarchy theme change while the reader is running.
+    pub(crate) fn refresh_theme(&mut self) {
+        if self.themes.refresh_active() {
+            self.theme_selected = self.themes.current_index().unwrap_or(0);
+        }
+    }
+
     pub(crate) fn translation(&self) -> Option<&Translation> {
         self.library.translations().get(self.translation_index)
     }

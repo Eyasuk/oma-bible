@@ -339,6 +339,40 @@ impl ThemeCatalog {
             None => false,
         }
     }
+
+    /// Re-read the active Omarchy theme.
+    ///
+    /// Omarchy swaps the `current/theme` link when the desktop theme changes.
+    /// Polling this keeps a running reader in step with the rest of the
+    /// session without restarting it. Off Omarchy the app keeps whatever theme
+    /// the user picked, so this is a no-op.
+    pub fn refresh_active(&mut self) -> bool {
+        if !self.on_omarchy {
+            return false;
+        }
+
+        let Some(theme) = load_active_theme() else {
+            return false;
+        };
+        if theme == self.active {
+            return false;
+        }
+
+        match self
+            .themes
+            .iter_mut()
+            .find(|candidate| candidate.slug == theme.slug)
+        {
+            Some(slot) => *slot = theme.clone(),
+            None => {
+                self.themes.push(theme.clone());
+                sort_themes(&mut self.themes);
+            }
+        }
+
+        self.active = theme;
+        true
+    }
 }
 
 /// `true` when the app is running inside an Omarchy session.

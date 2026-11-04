@@ -63,11 +63,18 @@ Inside the Bible API browser: `j` / `k` select a translation, `Enter`
 downloads it, `/` searches, `l` changes the language filter, `r` refreshes the
 catalogue, and `Esc` cancels an in-progress download or closes the window.
 
+### Amharic in the terminal
+
+A terminal draws every character on a fixed cell grid, but most monospace fonts
+hand Ethiopic glyphs to a proportional fallback. The TUI therefore puts one
+blank cell between adjacent Ethiopic letters, so Amharic words stay legible
+instead of touching. The GTK app uses Noto Sans/Serif Ethiopic directly.
+
 ## Themes
 
-On Omarchy, both front ends automatically use the current Omarchy theme. Run
-`omarchy theme set <name>` to change it; the apps pick up the new colours the
-next time they start. The GTK app shows the active theme in the footer.
+On Omarchy, both front ends use the current Omarchy theme. Run
+`omarchy theme set <name>` to change it; a running reader notices the change
+within a second and redraws with the new colours. No restart is needed.
 
 Off Omarchy, the apps still read the installed `colors.toml` files:
 

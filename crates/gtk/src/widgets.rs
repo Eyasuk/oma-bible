@@ -10,7 +10,6 @@ pub(crate) struct Widgets {
     pub verses: gtk::ListBox,
     pub heading: gtk::Label,
     pub status: gtk::Label,
-    pub theme_label: gtk::Label,
     pub provider: gtk::CssProvider,
     pub split: adw::OverlaySplitView,
     pub bookmarks_list: gtk::ListBox,
@@ -75,6 +74,7 @@ pub(crate) fn theme_css(theme: &Theme, font_size: u32) -> String {
 .oma-window, .oma-root {{
     background-color: {background};
     color: {foreground};
+    font-family: "Noto Sans", "Noto Sans Ethiopic", sans-serif;
 }}
 headerbar {{
     background-color: {dark_background};
@@ -88,13 +88,13 @@ headerbar {{
 }}
 .oma-title {{
     color: {accent};
-    font-family: "IBM Plex Mono", "Noto Sans Mono", monospace;
+    font-family: "IBM Plex Mono", "Noto Sans Mono", "Noto Sans Ethiopic", monospace;
     font-size: 12px;
     font-weight: 700;
 }}
 .oma-badge, .oma-muted {{
     color: {muted};
-    font-family: "IBM Plex Mono", "Noto Sans Mono", monospace;
+    font-family: "IBM Plex Mono", "Noto Sans Mono", "Noto Sans Ethiopic", monospace;
     font-size: 11px;
 }}
 .oma-sidebar {{
@@ -110,7 +110,7 @@ headerbar {{
 }}
 .oma-section {{
     color: {muted};
-    font-family: "IBM Plex Mono", "Noto Sans Mono", monospace;
+    font-family: "IBM Plex Mono", "Noto Sans Mono", "Noto Sans Ethiopic", monospace;
     font-size: 10px;
     font-weight: 700;
 }}
@@ -167,7 +167,7 @@ headerbar {{
 }}
 .oma-verse-number {{
     color: {muted};
-    font-family: "IBM Plex Mono", "Noto Sans Mono", monospace;
+    font-family: "IBM Plex Mono", "Noto Sans Mono", "Noto Sans Ethiopic", monospace;
     font-size: 11px;
     font-weight: 700;
     margin-top: 4px;
@@ -252,7 +252,7 @@ headerbar {{
 }}
 .oma-help {{
     color: {foreground};
-    font-family: "IBM Plex Mono", "Noto Sans Mono", monospace;
+    font-family: "IBM Plex Mono", "Noto Sans Mono", "Noto Sans Ethiopic", monospace;
     font-size: 12px;
 }}
 .oma-note-entry {{

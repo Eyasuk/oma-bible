@@ -1,4 +1,9 @@
-use std::{error::Error, io, sync::mpsc, time::Duration};
+use std::{
+    error::Error,
+    io,
+    sync::mpsc,
+    time::{Duration, Instant},
+};
 
 use crossterm::event::{self, Event, KeyEventKind};
 use oma_bible_core::{
@@ -58,8 +63,14 @@ fn run() -> Result<(), Box<dyn Error>> {
 }
 
 fn run_app(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
+    let mut last_theme_check = Instant::now();
+
     while !app.quit {
         app.poll_worker();
+        if last_theme_check.elapsed() >= Duration::from_secs(1) {
+            app.refresh_theme();
+            last_theme_check = Instant::now();
+        }
         terminal.draw(|frame| render::ui(frame, app))?;
 
         if event::poll(Duration::from_millis(100))?

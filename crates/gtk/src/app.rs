@@ -506,7 +506,7 @@ impl Ui {
     }
 
     fn update_footer(&self) {
-        let (text, theme) = {
+        let text = {
             let state = self.state.borrow();
             let reference = match (state.translation(), state.book(), state.chapter()) {
                 (Some(translation), Some(book), Some(chapter)) => format!(
@@ -533,14 +533,10 @@ impl Ui {
                     state.search_matches.len()
                 )
             };
-            (
-                format!("{}  ·  {reference}{search}", state.focus.label()),
-                format!("Theme · {}", state.themes.active().name),
-            )
+            format!("{}  ·  {reference}{search}", state.focus.label())
         };
 
         self.widgets.status.set_text(&text);
-        self.widgets.theme_label.set_text(&theme);
     }
 
     pub(crate) fn save_position(&self) {
@@ -956,9 +952,28 @@ impl Ui {
         self.widgets
             .provider
             .load_from_string(&crate::widgets::theme_css(&theme, font_size));
-        self.widgets
-            .theme_label
-            .set_text(&format!("Theme · {}", theme.name));
+    }
+
+    /// Follow an Omarchy theme change while the reader is running.
+    pub(crate) fn refresh_theme(&self) {
+        let changed = {
+            let mut state = self.state.borrow_mut();
+            state.themes.refresh_active()
+        };
+        if !changed {
+            return;
+        }
+
+        let search_active = {
+            let state = self.state.borrow();
+            !state.search.trim().is_empty()
+        };
+        self.update_theme_css();
+        if search_active {
+            // Search highlighting is rendered with inline colours, so rebuild
+            // those rows; everything else follows the CSS provider.
+            self.show_verses();
+        }
     }
 
     pub(crate) fn apply_theme(&self, index: usize) {
