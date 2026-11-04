@@ -1,0 +1,10 @@
+[package]
+name = "oma-bible-tui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+oma-bible-core.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+textwrap.workspace = true

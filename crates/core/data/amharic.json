@@ -1,0 +1,18 @@
+{
+  "name": "አማርኛ መጽሐፍ ቅዱስ",
+  "language": "Amharic",
+  "abbreviation": "AMH",
+  "books": [
+    {
+      "name": "ኦሪት ዘፍጥረት",
+      "chapters": [
+        {
+          "number": 1,
+          "verses": [
+            "በመጀመሪያ እግዚአብሔር ሰማይንና ምድርን ፈጠረ።"
+          ]
+        }
+      ]
+    }
+  ]
+}

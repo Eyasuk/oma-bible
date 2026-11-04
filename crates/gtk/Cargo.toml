@@ -1,0 +1,9 @@
+[package]
+name = "oma-bible-gtk"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+oma-bible-core.workspace = true
+gtk.workspace = true
+adw.workspace = true
