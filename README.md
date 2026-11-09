@@ -10,9 +10,9 @@ theme colours, restrained chrome, a centred reading column, and a muted footer.
 |---|---|
 | `crates/core` | Bible data model, JSON loading, HelloAO downloads, themes, persistence (`oma-bible-core`) |
 | `crates/tui` | Terminal reader (`oma-bible-tui`) |
-| `crates/gtk` | GTK4 + libadwaita app (`oma-bible-gtk`) |
+| `crates/gpui` | GPU-accelerated desktop app (`oma-bible-gpui`, GPUI + gpui-kit/components) |
 
-The core crate has no UI dependencies, so both front ends share the same models,
+The core crate has no UI dependencies, so front ends share the same models,
 loaders, download client, settings, bookmarks, and theme catalog.
 
 ## Run
@@ -23,45 +23,72 @@ TUI:
 cargo run -p oma-bible-tui
 ```
 
-GTK:
+GPUI (desktop):
 
 ```bash
-cargo run -p oma-bible-gtk
+cargo run -p oma-bible-gpui
 ```
 
-The GTK app has a books/chapters sidebar, a centred reading column, a bookmarks
-and study panel, and a slim header and footer. Downloads and settings open in
-separate windows.
+The GPUI app is the primary desktop frontend: a single centred reading column,
+small icon-only chrome, and popup overlays for book/chapter navigation,
+settings, themes, downloads, and study.
 
 ## Keys
 
-The same Neovim-style keys work in both front ends.
+The TUI and GPUI apps share the same Neovim-style reading keys. The TUI also
+uses `h` / `l` and `Tab` to move between its books, chapters, and verses panes;
+in GPUI, `h` / `l` change chapters directly.
 
 | Key | Action |
 |---|---|
-| `j` / `k`, `Down` / `Up` | Move in the focused pane |
-| `h` / `l`, `Left` / `Right`, `Tab` | Move between books, chapters, and verses |
-| `gg` / `G`, `Home` / `End` | First or last item |
-| `Ctrl+d` / `Ctrl+u`, `PgDn` / `PgUp` | Half page down or up |
-| `[` / `]` | Previous or next chapter |
-| `Enter` | Move focus forward |
+| `j` / `k`, `Down` / `Up` | Previous or next verse |
+| `h` / `l`, `Left` / `Right` | Previous or next chapter |
+| `gg` / `G`, `Home` / `End` | First or last verse |
+| `Ctrl+d` / `Ctrl+u`, `PgDn` / `PgUp` | Page down or up |
+| `o` / `Enter` | Open the book and chapter navigator (GPUI) |
 | `/` | Search the current chapter |
 | `n` / `N` | Next or previous search match |
+| `y` | Copy the selected verse (GPUI) |
+| `Ctrl+C` | Copy selected text; quit when nothing is selected (GPUI) |
 | `m` | Toggle a bookmark on the selected verse |
 | `M` | Add or edit a note for the selected verse |
-| `S` | Bookmarks and study panel |
-| `t` | Focus the translation chooser |
+| `H` | Highlight the selected verse (GPUI) |
+| `Ctrl+Shift+D` | Move the shortcut dock to the next edge (GPUI) |
+| `S` | Bookmarks and study screen |
+| `t` | Installed translations |
+| `T` | Themes |
 | `D` | Add a translation from the Bible API |
-| `T` or `,` | Settings |
+| `,` | Settings overlay (GPUI) |
 | `?` | Keyboard shortcut help |
 | `q` / `Esc` | Leave the current screen, or quit |
+
+Inside the navigator: `j` / `k` select a book, `h` / `l` select a chapter,
+and `Enter` applies the selection.
+
+In the GPUI reader, `y` copies the selected verse. To copy part of the text,
+drag across it — a selection can span several verses — or double-click a word,
+then press `Ctrl+C`. `Ctrl+C` with no selection quits.
+
+The icon bar under the text is a dockable shortcut bar. Click the panel icon at
+its right end or press `Ctrl+Shift+D` to cycle it through bottom, left, top, and
+right; the position is saved and restored on the next launch. When a vertical
+dock is taller than the window, scroll it with the mouse wheel.
+
+Some translations have empty versification gaps (for example Revelation 1:5–6 in
+the Amharic text). The GPUI reader hides empty verses and `j` / `k` skip them.
+An empty verse that carries a bookmark or note stays visible, with a `—`
+placeholder instead of text so the annotation remains reachable.
+
+Inside the highlight sheet: `j` / `k` or `h` / `l` choose a colour, `Enter`
+applies it, and `x` removes the highlight. The number keys `1`–`4` pick a colour
+directly; `5` removes it.
 
 Inside the study panel: `j` / `k` select a bookmark, `Enter` jumps to it, `x`
 or `Delete` removes it, and `M` edits its note.
 
 Inside the Bible API browser: `j` / `k` select a translation, `Enter`
 downloads it, `/` searches, `l` changes the language filter, `r` refreshes the
-catalogue, and `Esc` cancels an in-progress download or closes the window.
+catalogue, and `Esc` cancels an in-progress download or closes the screen.
 
 ### Fonts for downloaded languages
 
@@ -81,12 +108,15 @@ right package can be installed.
 
 On Omarchy, both front ends use the current Omarchy theme. Run
 `omarchy theme set <name>` to change it; a running reader notices the change
-within a second and redraws with the new colours. No restart is needed.
+within a second and redraws with the new colours. No restart is needed. In the
+GPUI theme screen this list is read-only and marks the active Omarchy theme.
 
 Off Omarchy, the apps still read the installed `colors.toml` files:
 
 - **TUI:** opens the theme picker at startup when more than one theme is found.
-- **GTK:** opens Settings on first run and keeps a theme dropdown there.
+- **GPUI:** starts with a palette matching the system light/dark appearance. A
+  theme chosen in the theme screen is saved in settings and wins over the
+  system appearance on later launches.
 
 Themes are discovered from:
 
@@ -94,8 +124,8 @@ Themes are discovered from:
 2. `$OMARCHY_PATH/themes/*/colors.toml` — stock themes
 3. `/usr/share/omarchy/themes/*/colors.toml` — stock fallback
 
-User themes win when a slug exists in both places. `Oma Dark` is always
-available as a neutral fallback.
+User themes win when a slug exists in both places. `Oma Dark` and `Oma Light`
+are always available as neutral fallbacks off Omarchy.
 
 ## Bible API downloads
 
@@ -146,6 +176,7 @@ for a complete Bible.
 | Downloaded translations | `$XDG_DATA_HOME/oma-bible` | `OMA_BIBLE_DOWNLOAD_DIR` |
 | Settings | `$XDG_CONFIG_HOME/oma-bible/settings.json` | `OMA_BIBLE_CONFIG_DIR` |
 | Bookmarks and notes | `$XDG_STATE_HOME/oma-bible/bookmarks.json` | `OMA_BIBLE_STATE_DIR` |
+| Verse highlights (GPUI) | `$XDG_STATE_HOME/oma-bible/highlights.json` | `OMA_BIBLE_STATE_DIR` |
 
 `OMA_BIBLE_DATA_DIR` also redirects downloads so a single override can point the
 whole app at a test library.
@@ -158,25 +189,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-## Why GTK instead of Qt Quick?
+## Desktop frontend (GPUI)
 
-Qt Quick is excellent at the kind of animated, custom-drawn interface Omawrite
-uses, and Qt 6 is installed on this machine. The reason to stay on GTK for this
-app is simplicity: `gtk-rs` is pure Rust, so there is one language, one build
-system, and no C++ bridge. That matters while learning Rust.
+The desktop UI is built with **GPUI** and `gpui-kit/components` for a
+GPU-accelerated, Rust-native experience. The `oma-bible-gpui` crate is the
+primary desktop frontend; the shared `oma-bible-core` crate keeps data, themes,
+downloads, settings, and bookmarks consistent across the TUI and GPUI apps.
 
-Qt Quick would become the better choice if the app grows features that play to
-QML's strengths: rich text editing, smooth page transitions, custom animations,
-and pixel-level control over typography. The Rust options are `cxx-qt` (QML plus
-a Rust backend through generated C++ bindings) or `qmetaobject` (QML with a more
-macro-driven Rust integration). Both add Qt, QML, and a C++ toolchain to the
-build.
-
-For now the GTK front end reproduces the Omawrite feel with CSS classes and a
-plain reading column, without that extra machinery.
-
-## Version note
-
-The GTK crates are pinned to `gtk4 0.10` and `libadwaita 0.8` because this
-machine has Rust 1.90. The newer `gtk4 0.11` / `libadwaita 0.9` releases
-require Rust 1.92. Upgrade both together when the toolchain is newer.
+The GTK frontend has been removed from the workspace as part of the switch.

@@ -1,9 +1,8 @@
 [package]
-name = "oma-bible-gtk"
+name = "oma-bible-gpui"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
 oma-bible-core.workspace = true
-gtk.workspace = true
-adw.workspace = true
+gpui-kit.workspace = true

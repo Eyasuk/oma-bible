@@ -1,6 +1,6 @@
-//! Small JSON files for settings and bookmarks.
+//! Small JSON files for settings, bookmarks, and highlights.
 //!
-//! Both files are optional: a missing or damaged file falls back to defaults so
+//! All files are optional: a missing or damaged file falls back to defaults so
 //! a broken state file can never stop the reader from starting.
 
 use std::{
@@ -26,10 +26,75 @@ pub struct Settings {
     /// 1-based number of the last selected verse.
     pub verse: Option<u32>,
     pub show_verse_numbers: bool,
-    /// Reading text size used by the GTK front end.
+    /// Reading text size used by the desktop front end.
     pub font_size: u32,
     /// Last language filter used in the download browser.
     pub download_language: Option<String>,
+    /// Which quick-action control the reader shows: an edge dock or a wheel.
+    pub controls: ControlsStyle,
+    /// Edge of the window the shortcut dock is attached to.
+    pub dock: DockPosition,
+}
+
+/// How the reader exposes bookmark, note, highlight, and settings actions.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ControlsStyle {
+    #[default]
+    Dock,
+    Wheel,
+}
+
+impl ControlsStyle {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Dock => "Dock",
+            Self::Wheel => "Wheel",
+        }
+    }
+
+    /// Next style in the settings toggle.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Dock => Self::Wheel,
+            Self::Wheel => Self::Dock,
+        }
+    }
+}
+
+/// Where the desktop shortcut dock sits. The reader still owns the keyboard
+/// shortcuts; this only positions the clickable strip.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DockPosition {
+    Top,
+    Left,
+    Right,
+    #[default]
+    Bottom,
+}
+
+impl DockPosition {
+    pub const ALL: [Self; 4] = [Self::Bottom, Self::Left, Self::Top, Self::Right];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Top => "Top",
+            Self::Left => "Left",
+            Self::Right => "Right",
+            Self::Bottom => "Bottom",
+        }
+    }
+
+    /// Next edge in the rotation used by the dock button.
+    pub fn next(self) -> Self {
+        match self {
+            Self::Bottom => Self::Left,
+            Self::Left => Self::Top,
+            Self::Top => Self::Right,
+            Self::Right => Self::Bottom,
+        }
+    }
 }
 
 impl Default for Settings {
@@ -43,6 +108,8 @@ impl Default for Settings {
             show_verse_numbers: true,
             font_size: 17,
             download_language: None,
+            controls: ControlsStyle::default(),
+            dock: DockPosition::default(),
         }
     }
 }
@@ -211,12 +278,166 @@ impl Bookmarks {
     }
 }
 
+/// The small set of colours a verse can be highlighted with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HighlightColor {
+    Yellow,
+    Green,
+    Blue,
+    Pink,
+}
+
+impl HighlightColor {
+    pub const ALL: [Self; 4] = [Self::Yellow, Self::Green, Self::Blue, Self::Pink];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Yellow => "Yellow",
+            Self::Green => "Green",
+            Self::Blue => "Blue",
+            Self::Pink => "Pink",
+        }
+    }
+}
+
+/// A colour applied to a verse, independent of bookmarks and notes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Highlight {
+    pub translation: String,
+    pub book: String,
+    pub chapter: u32,
+    pub verse: u32,
+    pub color: HighlightColor,
+    #[serde(default)]
+    pub created: u64,
+}
+
+impl Highlight {
+    pub fn new(
+        translation: impl Into<String>,
+        book: impl Into<String>,
+        chapter: u32,
+        verse: u32,
+        color: HighlightColor,
+    ) -> Self {
+        Self {
+            translation: translation.into(),
+            book: book.into(),
+            chapter,
+            verse,
+            color,
+            created: now_seconds(),
+        }
+    }
+
+    /// `Genesis 1:1`, without the translation name.
+    pub fn reference(&self) -> String {
+        format!("{} {}:{}", self.book, self.chapter, self.verse)
+    }
+}
+
+/// All verse highlights, in the order they were first added.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Highlights {
+    items: Vec<Highlight>,
+}
+
+impl Highlights {
+    pub fn load() -> Self {
+        Self::load_from(highlights_path()).unwrap_or_default()
+    }
+
+    pub fn load_from(path: impl AsRef<Path>) -> Option<Self> {
+        let contents = fs::read_to_string(path).ok()?;
+        serde_json::from_str(&contents).ok()
+    }
+
+    pub fn save(&self) -> io::Result<()> {
+        self.save_to(highlights_path())
+    }
+
+    pub fn save_to(&self, path: impl AsRef<Path>) -> io::Result<()> {
+        write_json(path.as_ref(), self)
+    }
+
+    pub fn items(&self) -> &[Highlight] {
+        &self.items
+    }
+
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    pub fn find(
+        &self,
+        translation: &str,
+        book: &str,
+        chapter: u32,
+        verse: u32,
+    ) -> Option<&Highlight> {
+        self.items.iter().find(|highlight| {
+            highlight.translation.eq_ignore_ascii_case(translation)
+                && highlight.book.eq_ignore_ascii_case(book)
+                && highlight.chapter == chapter
+                && highlight.verse == verse
+        })
+    }
+
+    /// Applies a colour, replacing the existing one when the verse is already
+    /// highlighted.
+    pub fn set(
+        &mut self,
+        translation: &str,
+        book: &str,
+        chapter: u32,
+        verse: u32,
+        color: HighlightColor,
+    ) {
+        match self.items.iter_mut().find(|highlight| {
+            highlight.translation.eq_ignore_ascii_case(translation)
+                && highlight.book.eq_ignore_ascii_case(book)
+                && highlight.chapter == chapter
+                && highlight.verse == verse
+        }) {
+            Some(highlight) => highlight.color = color,
+            None => self
+                .items
+                .push(Highlight::new(translation, book, chapter, verse, color)),
+        }
+    }
+
+    pub fn remove(&mut self, translation: &str, book: &str, chapter: u32, verse: u32) -> bool {
+        let before = self.items.len();
+        self.items.retain(|highlight| {
+            !(highlight.translation.eq_ignore_ascii_case(translation)
+                && highlight.book.eq_ignore_ascii_case(book)
+                && highlight.chapter == chapter
+                && highlight.verse == verse)
+        });
+        before != self.items.len()
+    }
+
+    pub fn clear(&mut self) {
+        self.items.clear();
+    }
+}
+
 pub fn settings_path() -> PathBuf {
     crate::config_dir().join("settings.json")
 }
 
 pub fn bookmarks_path() -> PathBuf {
     crate::state_dir().join("bookmarks.json")
+}
+
+pub fn highlights_path() -> PathBuf {
+    crate::state_dir().join("highlights.json")
 }
 
 fn now_seconds() -> u64 {
@@ -298,6 +519,36 @@ mod tests {
         let bookmark = bookmarks.find("KJV", "John", 3, 16).unwrap();
         assert_eq!(bookmark.note, "grace");
         assert_eq!(bookmark.reference(), "John 3:16");
+    }
+
+    #[test]
+    fn setting_a_highlight_replaces_the_colour() {
+        let mut highlights = Highlights::default();
+
+        highlights.set("KJV", "John", 3, 16, HighlightColor::Yellow);
+        highlights.set("kjv", "john", 3, 16, HighlightColor::Blue);
+
+        assert_eq!(highlights.len(), 1);
+        assert_eq!(
+            highlights.find("KJV", "John", 3, 16).unwrap().color,
+            HighlightColor::Blue
+        );
+        assert!(highlights.remove("KJV", "John", 3, 16));
+        assert!(highlights.is_empty());
+    }
+
+    #[test]
+    fn highlights_round_trip_through_a_file() {
+        let path = temporary_file("highlights");
+        let mut highlights = Highlights::default();
+        highlights.set("KJV", "Psalm", 23, 1, HighlightColor::Green);
+
+        highlights.save_to(&path).unwrap();
+        let loaded = Highlights::load_from(&path).unwrap();
+        fs::remove_file(path).unwrap();
+
+        assert_eq!(loaded, highlights);
+        assert_eq!(loaded.items()[0].reference(), "Psalm 23:1");
     }
 
     #[test]

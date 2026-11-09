@@ -13,6 +13,7 @@ use std::{
 use serde::Deserialize;
 
 const FALLBACK_SLUG: &str = "oma-dark";
+const FALLBACK_LIGHT_SLUG: &str = "oma-light";
 const STOCK_OMARCHY_PATH: &str = "/usr/share/omarchy";
 
 /// A colour from an Omarchy `colors.toml` file.
@@ -126,6 +127,31 @@ impl Theme {
             blue: Rgb::new(0x89, 0xb4, 0xfa),
             magenta: Rgb::new(0xcb, 0xa6, 0xf7),
             cyan: Rgb::new(0x89, 0xdc, 0xeb),
+        }
+    }
+
+    /// A calm, paper-like light palette used when the desktop is in light mode
+    /// and no Omarchy theme provides one.
+    pub fn fallback_light() -> Self {
+        Self {
+            slug: FALLBACK_LIGHT_SLUG.to_string(),
+            name: "Oma Light".to_string(),
+            mode: ThemeMode::Light,
+            accent: Rgb::new(0x3f, 0x6f, 0x9f),
+            selection: Rgb::new(0xdc, 0xd3, 0xc6),
+            muted: Rgb::new(0x7b, 0x74, 0x69),
+            background: Rgb::new(0xf7, 0xf3, 0xec),
+            dark_background: Rgb::new(0xec, 0xe6, 0xdc),
+            lighter_background: Rgb::new(0xe9, 0xe2, 0xd7),
+            foreground: Rgb::new(0x2d, 0x2a, 0x26),
+            dark_foreground: Rgb::new(0x63, 0x5d, 0x55),
+            bright_foreground: Rgb::new(0x12, 0x10, 0x0e),
+            red: Rgb::new(0xa8, 0x3b, 0x3b),
+            yellow: Rgb::new(0x93, 0x6c, 0x13),
+            green: Rgb::new(0x3f, 0x70, 0x3f),
+            blue: Rgb::new(0x3f, 0x6f, 0x9f),
+            magenta: Rgb::new(0x7d, 0x4a, 0x7d),
+            cyan: Rgb::new(0x2f, 0x75, 0x7d),
         }
     }
 
@@ -272,6 +298,10 @@ impl ThemeCatalog {
 
         if !on_omarchy && !themes.iter().any(|theme| theme.slug == FALLBACK_SLUG) {
             themes.push(Theme::fallback());
+            sort_themes(&mut themes);
+        }
+        if !on_omarchy && !themes.iter().any(|theme| theme.slug == FALLBACK_LIGHT_SLUG) {
+            themes.push(Theme::fallback_light());
             sort_themes(&mut themes);
         }
 

@@ -76,7 +76,7 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
-            "No translations installed — press D to add one",
+            "No translations installed · Press D to add one",
             Style::new().fg(color(theme.muted)),
         ));
     }
@@ -234,13 +234,13 @@ fn visible_verse_count(starts: &[usize], scroll: usize, height: usize) -> usize 
 fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
     let hints = match app.focus {
         Focus::Books => {
-            "books · j/k move · h/l pane · Enter chapters · [ ] chapter · m mark · / search · S study · D add · t translations · T theme · , settings · ? help · q quit"
+            "Books: j/k · h/l switch pane · Enter: chapters · [/] chapter · m mark · / search · S study · D add · t translations · T theme · , settings · ? help · q quit"
         }
         Focus::Chapters => {
-            "chapters · j/k move · h/l pane · Enter verses · [ ] chapter · m mark · / search · S study · D add · t translations · T theme · , settings · ? help · q quit"
+            "Chapters: j/k · h/l switch pane · Enter: verses · [/] chapter · m mark · / search · S study · D add · t translations · T theme · , settings · ? help · q quit"
         }
         Focus::Verses => {
-            "verses · j/k verse · Ctrl+d/u page · gg/G ends · m mark · M note · / search · n/N next · S study · D add · [ ] chapter · q quit"
+            "Verses: j/k · h/l switch pane · Ctrl+d/u page · gg/G top/bottom · m mark · M note · / search · n/N next/prev · [/] chapter · S study · D add · q quit"
         }
     };
     let text = match &app.message {
@@ -496,7 +496,7 @@ fn render_translations(frame: &mut Frame, area: Rect, app: &App) {
         " Translations ",
         items,
         Some(app.translation_selected),
-        "No translations installed. Press d to add one from the Bible API.",
+        "No translations installed. Press D to add one from the Bible API.",
     );
 }
 
@@ -549,11 +549,11 @@ fn render_download(frame: &mut Frame, area: Rect, app: &App) {
                 Style::new().fg(color(theme.foreground)),
             ),
             Span::styled(
-                format!("  ·  language: {}", language_filter_label(app)),
+                format!("  ·  Language: {}", language_filter_label(app)),
                 Style::new().fg(color(theme.accent)),
             ),
             Span::styled(
-                "  ·  l changes language · r refreshes",
+                "  ·  l filter · r refresh",
                 Style::new().fg(color(theme.muted)),
             ),
         ]));
@@ -629,7 +629,7 @@ fn render_download(frame: &mut Frame, area: Rect, app: &App) {
         if app.catalog_loading {
             "Loading…"
         } else {
-            "No translations match this filter. Press / to change the search or l for another language."
+            "No translations match. Press / to search or l to filter by language."
         },
     );
 }
@@ -896,18 +896,18 @@ fn render_list(
 
 fn render_screen_footer(frame: &mut Frame, area: Rect, app: &App) {
     let hints = match app.screen {
-        Screen::Themes => "j/k choose · Enter apply · Esc back",
-        Screen::Translations => "j/k choose · Enter read · / filter · d add · Esc back",
+        Screen::Themes => "j/k move · Enter select · Esc back",
+        Screen::Translations => "j/k move · Enter read · / filter · D add · Esc back",
         Screen::Download => {
             if app.download.is_some() {
-                "Esc cancel download"
+                "Esc cancel"
             } else {
-                "j/k choose · Enter download · / search · l language · r refresh · Esc back"
+                "j/k move · Enter download · / search · l filter language · r refresh · Esc back"
             }
         }
-        Screen::Languages => "j/k choose · Enter filter · / search · Esc back",
-        Screen::Study => "j/k choose · Enter jump · x remove · M note · Esc back",
-        Screen::Settings => "j/k choose · Enter change · Esc back",
+        Screen::Languages => "j/k move · Enter select · / search · Esc back",
+        Screen::Study => "j/k move · Enter jump · x remove · M edit note · Esc back",
+        Screen::Settings => "j/k move · Enter open/change · Esc back",
         Screen::Help => "Esc back",
         Screen::Reader => "",
     };
