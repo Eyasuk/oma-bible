@@ -53,7 +53,8 @@ in GPUI, `h` / `l` change chapters directly.
 | `m` | Toggle a bookmark on the selected verse |
 | `M` | Add or edit a note for the selected verse |
 | `H` | Highlight the selected verse (GPUI) |
-| `Ctrl+Shift+D` | Move the shortcut dock to the next edge (GPUI) |
+| `Ctrl+Shift+D` | Move the shortcut dock to the next edge, or hide it (GPUI) |
+| `Space` / right-click | Open the action wheel (GPUI) |
 | `S` | Bookmarks and study screen |
 | `t` | Installed translations |
 | `T` | Themes |
@@ -69,10 +70,19 @@ In the GPUI reader, `y` copies the selected verse. To copy part of the text,
 drag across it — a selection can span several verses — or double-click a word,
 then press `Ctrl+C`. `Ctrl+C` with no selection quits.
 
-The icon bar under the text is a dockable shortcut bar. Click the panel icon at
-its right end or press `Ctrl+Shift+D` to cycle it through bottom, left, top, and
-right; the position is saved and restored on the next launch. When a vertical
-dock is taller than the window, scroll it with the mouse wheel.
+The small pill at the bottom is the shortcut dock: bookmark, note, highlight,
+copy, and settings. `Ctrl+Shift+D` (or the Dock row in settings) moves it to the
+left, top, or right edge, or hides it; the choice is saved.
+
+Right-click anywhere in the text to open the action wheel around the pointer;
+the verse under the pointer becomes the selected one. `Space` opens it in the
+middle of the window. The hub names the tool under the pointer and its key. Press
+`1`–`6` or a tool's own key (`m`, `M`, `H`, `y`, `S`, `,`) to pick one, or `Esc`
+to close.
+
+Notes in the open chapter sit as a small stack of cards at the middle of the
+right edge (the left edge when the dock is on the right). Hover it to fan the
+cards out into a list; click a card to jump to that verse and read the note.
 
 Some translations have empty versification gaps (for example Revelation 1:5–6 in
 the Amharic text). The GPUI reader hides empty verses and `j` / `k` skip them.

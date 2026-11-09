@@ -37,9 +37,9 @@ impl RenderOnce for ReaderView {
         let translation_abbr = translation
             .map(|translation| translation.abbreviation.clone())
             .unwrap_or_default();
-        let verses = chapter
-            .map(|chapter| chapter.verses.clone())
-            .unwrap_or_default();
+        let verses: &[String] = chapter
+            .map(|chapter| chapter.verses.as_slice())
+            .unwrap_or(&[]);
         let visible_verses = state.visible_verse_indices();
         let selected = state.verse_index;
         let font_size = state.reader_font_size();
@@ -133,6 +133,7 @@ impl RenderOnce for ReaderView {
                 )
                 .children(visible_verses.into_iter().map(|index| {
                     let row_app = app.clone();
+                    let menu_app = app.clone();
                     let verse = verses[index].clone();
                     let verse_number = index as u32 + 1;
                     let bookmark = state.bookmarks.find(
@@ -141,10 +142,8 @@ impl RenderOnce for ReaderView {
                         chapter_number,
                         verse_number,
                     );
-                    let note = bookmark
-                        .as_ref()
-                        .map(|bookmark| bookmark.note.trim().to_string())
-                        .filter(|note| !note.is_empty());
+                    let has_note =
+                        bookmark.is_some_and(|bookmark| !bookmark.note.trim().is_empty());
                     let highlight = highlights
                         .find(&translation_abbr, &book_name, chapter_number, verse_number)
                         .map(|highlight| highlight.color);
@@ -170,6 +169,11 @@ impl RenderOnce for ReaderView {
                                 app.verse_index = index;
                                 cx.notify();
                             });
+                        })
+                        // Right-click acts on the verse under the pointer; the
+                        // root view then opens the wheel around it.
+                        .on_mouse_down(MouseButton::Right, move |_event, _window, cx| {
+                            menu_app.update(cx, |app, _| app.verse_index = index);
                         });
 
                     if in_visual {
@@ -231,9 +235,17 @@ impl RenderOnce for ReaderView {
                         .into_any_element()
                     };
 
-                    let mut text = v_flex().flex_1().min_w_0().gap(px(6.)).child(verse_text);
+                    row = row.child(div().flex_1().min_w_0().child(verse_text));
 
-                    if let Some(note) = note {
+                    if bookmark.is_some() && !has_note {
+                        row = row.child(
+                            Icon::new(IconName::Bookmark)
+                                .size(px(14.))
+                                .text_color(cx.theme().accent),
+                        );
+                    }
+
+                    if has_note {
                         let note_target = NoteTarget {
                             translation: translation_abbr.clone(),
                             book: book_name.clone(),
@@ -241,35 +253,20 @@ impl RenderOnce for ReaderView {
                             verse: verse_number,
                         };
                         let note_app = app.clone();
-                        text = text.child(
+                        row = row.child(
                             div()
                                 .id(SharedString::from(format!(
                                     "reader-note-{chapter_number}-{index}"
                                 )))
                                 .cursor_pointer()
-                                .rounded(px(6.))
-                                .px(px(6.))
-                                .py(px(2.))
-                                .text_size(px(14.))
-                                .line_height(px(20.))
-                                .text_color(cx.theme().muted_foreground)
-                                .hover(|style| style.bg(cx.theme().muted))
+                                .text_color(cx.theme().accent)
                                 .on_click(move |_event, _window, cx| {
+                                    cx.stop_propagation();
                                     note_app.update(cx, |app, cx| {
                                         app.open_note_detail(note_target.clone(), cx);
                                     });
                                 })
-                                .child(format!("Note · {note}")),
-                        );
-                    }
-
-                    row = row.child(text);
-
-                    if bookmark.is_some() {
-                        row = row.child(
-                            Icon::new(IconName::Bookmark)
-                                .size(px(14.))
-                                .text_color(cx.theme().accent),
+                                .child(Icon::new(IconName::StickyNote).size(px(14.))),
                         );
                     }
 

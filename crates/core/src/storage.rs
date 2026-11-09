@@ -30,40 +30,13 @@ pub struct Settings {
     pub font_size: u32,
     /// Last language filter used in the download browser.
     pub download_language: Option<String>,
-    /// Which quick-action control the reader shows: an edge dock or a wheel.
-    pub controls: ControlsStyle,
     /// Edge of the window the shortcut dock is attached to.
     pub dock: DockPosition,
 }
 
-/// How the reader exposes bookmark, note, highlight, and settings actions.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ControlsStyle {
-    #[default]
-    Dock,
-    Wheel,
-}
-
-impl ControlsStyle {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Dock => "Dock",
-            Self::Wheel => "Wheel",
-        }
-    }
-
-    /// Next style in the settings toggle.
-    pub fn next(self) -> Self {
-        match self {
-            Self::Dock => Self::Wheel,
-            Self::Wheel => Self::Dock,
-        }
-    }
-}
-
-/// Where the desktop shortcut dock sits. The reader still owns the keyboard
-/// shortcuts; this only positions the clickable strip.
+/// Where the desktop shortcut dock floats. The reader still owns the keyboard
+/// shortcuts and the right-click wheel; this only positions (or hides) the
+/// clickable pill.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DockPosition {
@@ -72,10 +45,17 @@ pub enum DockPosition {
     Right,
     #[default]
     Bottom,
+    Hidden,
 }
 
 impl DockPosition {
-    pub const ALL: [Self; 4] = [Self::Bottom, Self::Left, Self::Top, Self::Right];
+    pub const ALL: [Self; 5] = [
+        Self::Bottom,
+        Self::Left,
+        Self::Top,
+        Self::Right,
+        Self::Hidden,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -83,6 +63,7 @@ impl DockPosition {
             Self::Left => "Left",
             Self::Right => "Right",
             Self::Bottom => "Bottom",
+            Self::Hidden => "Hidden",
         }
     }
 
@@ -92,7 +73,8 @@ impl DockPosition {
             Self::Bottom => Self::Left,
             Self::Left => Self::Top,
             Self::Top => Self::Right,
-            Self::Right => Self::Bottom,
+            Self::Right => Self::Hidden,
+            Self::Hidden => Self::Bottom,
         }
     }
 }
@@ -108,7 +90,6 @@ impl Default for Settings {
             show_verse_numbers: true,
             font_size: 17,
             download_language: None,
-            controls: ControlsStyle::default(),
             dock: DockPosition::default(),
         }
     }

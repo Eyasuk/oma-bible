@@ -2,8 +2,10 @@
 
 mod actions;
 mod app;
+mod chrome;
 mod reader;
 mod theme;
+mod tools;
 
 use app::run;
 

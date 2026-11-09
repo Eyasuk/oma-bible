@@ -12,15 +12,15 @@ use oma_bible_core::{
     bible::{Library, Translation},
     fonts,
     remote::{self, DownloadControl, RemoteCatalog, RemoteTranslation},
-    storage::{
-        Bookmark, Bookmarks, ControlsStyle, DockPosition, HighlightColor, Highlights, Settings,
-    },
+    storage::{Bookmark, Bookmarks, HighlightColor, Highlights, Settings},
     theme::ThemeCatalog,
 };
 
 use crate::actions::*;
+use crate::chrome;
 use crate::reader::ReaderView;
 use crate::theme as app_theme;
+use crate::tools::Tool;
 
 pub fn run() -> Result<(), Box<dyn Error>> {
     application().with_assets(AllAssets).run(|cx| {
@@ -192,6 +192,11 @@ pub struct OmaBibleApp {
     pub note_detail: Option<NoteTarget>,
 
     pub overlay: Overlay,
+    /// Window position the wheel opens around; `None` centres it.
+    pub wheel_center: Option<Point<Pixels>>,
+    pub wheel_hover: Option<Tool>,
+    /// The chapter notes stack fans out while the pointer is over it.
+    pub notes_expanded: bool,
     pub nav_book_index: usize,
     pub nav_chapter_index: usize,
     pub nav_book_scroll: ScrollHandle,
@@ -286,6 +291,9 @@ impl OmaBibleApp {
             note_target: None,
             note_detail: None,
             overlay: Overlay::None,
+            wheel_center: None,
+            wheel_hover: None,
+            notes_expanded: false,
             nav_book_index: 0,
             nav_chapter_index: 0,
             nav_book_scroll: ScrollHandle::new(),
@@ -1019,16 +1027,8 @@ impl OmaBibleApp {
             5 => {
                 self.adjust_font_size(2, cx);
             }
-            6 => self.toggle_controls(cx),
+            6 => self.cycle_dock(cx),
             7 => {
-                if self.settings.controls == ControlsStyle::Dock {
-                    self.cycle_dock(cx);
-                } else {
-                    self.overlay = Overlay::None;
-                    self.open_help(cx);
-                }
-            }
-            8 => {
                 self.overlay = Overlay::None;
                 self.open_help(cx);
             }
@@ -1123,11 +1123,23 @@ impl OmaBibleApp {
             },
             Overlay::Wheel => match key {
                 "escape" | "q" | "space" => self.close_overlay(cx),
-                "1" | "b" => self.activate_wheel_item(0, window, cx),
-                "2" | "n" => self.activate_wheel_item(1, window, cx),
-                "3" | "h" => self.activate_wheel_item(2, window, cx),
-                "4" | "," => self.activate_wheel_item(3, window, cx),
-                _ => {}
+                _ => {
+                    let by_number = key
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|n| n.checked_sub(1))
+                        .and_then(|i| Tool::WHEEL.get(i).copied());
+                    // GPUI reports Shift+h as "h" with `shift` set.
+                    let typed = if shift && key.len() == 1 {
+                        key.to_uppercase()
+                    } else {
+                        key.to_string()
+                    };
+                    let by_key = Tool::WHEEL.iter().copied().find(|tool| tool.key() == typed);
+                    if let Some(tool) = by_number.or(by_key) {
+                        self.run_tool(tool, window, cx);
+                    }
+                }
             },
             Overlay::None => {}
         }
@@ -1440,34 +1452,101 @@ impl OmaBibleApp {
         self.set_status(format!("Shortcut dock: {}", self.settings.dock.label()), cx);
     }
 
-    fn toggle_controls(&mut self, cx: &mut Context<Self>) {
-        self.settings.controls = self.settings.controls.next();
-        let _ = self.settings.save();
-        self.settings_selected = self
-            .settings_selected
-            .min(self.settings_row_count().saturating_sub(1));
-        self.set_status(
-            format!("Quick controls: {}", self.settings.controls.label()),
-            cx,
-        );
+    fn settings_row_count(&self) -> usize {
+        8
     }
 
-    fn activate_wheel_item(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.overlay = Overlay::None;
-        match index {
-            0 => self.toggle_bookmark(cx),
-            1 => self.open_note_for_current_smart(window, cx),
-            2 => self.open_highlight(cx),
-            3 => self.open_settings_sheet(cx),
-            _ => cx.notify(),
+    /// Whether a tool's state is "on" for the selected verse.
+    pub fn tool_active(&self, tool: Tool) -> bool {
+        let Some((translation, book, chapter, verse)) = self.current_reference() else {
+            return false;
+        };
+        match tool {
+            Tool::Bookmark => self
+                .bookmarks
+                .find(&translation, &book, chapter, verse)
+                .is_some(),
+            Tool::Note => self
+                .bookmarks
+                .find(&translation, &book, chapter, verse)
+                .is_some_and(|bookmark| !bookmark.note.trim().is_empty()),
+            Tool::Highlight => self
+                .highlights
+                .find(&translation, &book, chapter, verse)
+                .is_some(),
+            Tool::Settings => self.overlay == Overlay::Settings,
+            Tool::Copy | Tool::Study => false,
         }
     }
 
-    fn settings_row_count(&self) -> usize {
-        if self.settings.controls == ControlsStyle::Dock {
-            9
-        } else {
-            8
+    pub fn run_tool(&mut self, tool: Tool, window: &mut Window, cx: &mut Context<Self>) {
+        self.overlay = Overlay::None;
+        self.wheel_hover = None;
+        match tool {
+            Tool::Bookmark => self.toggle_bookmark(cx),
+            Tool::Note => self.open_note_for_current_smart(window, cx),
+            Tool::Highlight => self.open_highlight(cx),
+            Tool::Copy => self.copy_current_verse(cx),
+            Tool::Study => self.open_study(cx),
+            Tool::Settings => self.open_settings_sheet(cx),
+        }
+        cx.notify();
+    }
+
+    /// Open the action wheel around `center`, or in the middle of the window.
+    pub fn open_wheel(&mut self, center: Option<Point<Pixels>>, cx: &mut Context<Self>) {
+        if self.screen != Screen::Reader || self.overlay != Overlay::None {
+            return;
+        }
+        self.wheel_center = center;
+        self.wheel_hover = None;
+        self.overlay = Overlay::Wheel;
+        cx.notify();
+    }
+
+    /// Notes attached to verses in the open chapter, in verse order.
+    pub fn chapter_notes(&self) -> Vec<(usize, String)> {
+        let (Some(translation), Some(book), Some(chapter)) =
+            (self.translation(), self.book(), self.chapter())
+        else {
+            return Vec::new();
+        };
+        let mut notes: Vec<(usize, String)> = self
+            .bookmarks
+            .items()
+            .iter()
+            .filter(|bookmark| {
+                bookmark.chapter == chapter.number
+                    && bookmark.verse >= 1
+                    && bookmark.book == book.name
+                    && bookmark
+                        .translation
+                        .eq_ignore_ascii_case(&translation.abbreviation)
+            })
+            .filter_map(|bookmark| {
+                let note = bookmark.note.trim();
+                (!note.is_empty()).then(|| (bookmark.verse as usize - 1, note.to_string()))
+            })
+            .collect();
+        notes.sort_by_key(|(verse, _)| *verse);
+        notes
+    }
+
+    /// Select a verse from the notes stack and open its note.
+    pub fn open_chapter_note(&mut self, verse_index: usize, cx: &mut Context<Self>) {
+        self.verse_index = verse_index;
+        self.scroll_to_verse(verse_index);
+        self.notes_expanded = false;
+        if let Some((translation, book, chapter, verse)) = self.current_reference() {
+            self.open_note_detail(
+                NoteTarget {
+                    translation,
+                    book,
+                    chapter,
+                    verse,
+                },
+                cx,
+            );
         }
     }
 
@@ -2135,12 +2214,7 @@ impl OmaBibleApp {
                 }
             }
             "v" | "V" if self.screen == Screen::Reader && !ctrl => self.toggle_visual(cx),
-            "space" | " " if self.screen == Screen::Reader && !ctrl => {
-                if self.settings.controls == ControlsStyle::Wheel {
-                    self.overlay = Overlay::Wheel;
-                    cx.notify();
-                }
-            }
+            "space" | " " if self.screen == Screen::Reader && !ctrl => self.open_wheel(None, cx),
             "/" if !shift => {
                 if self.screen == Screen::Reader {
                     self.open_search(window, cx);
@@ -2245,161 +2319,48 @@ impl Render for OmaBibleApp {
                 )
         });
 
-        let dock = render_dock(self, cx);
         let status_bar = render_status_bar(self, cx);
         let overlay = render_overlay(self, cx);
-        let dock_position = self.settings.dock;
+        let on_reader = self.screen == Screen::Reader;
+        let dock = on_reader.then(|| chrome::render_dock(self, cx)).flatten();
+        let notes = on_reader
+            .then(|| chrome::render_notes_stack(self, cx))
+            .flatten();
 
-        let reading = v_flex()
-            .flex_1()
-            .min_h_0()
-            .child(div().flex_1().min_h_0().child(body))
-            .children(input_bar);
-
-        let mut content = v_flex()
+        let content = v_flex()
             .relative()
             .size_full()
             .bg(cx.theme().background)
-            .text_color(cx.theme().foreground);
-
-        content = if self.settings.controls == ControlsStyle::Wheel {
-            content.child(reading).child(status_bar)
-        } else {
-            match dock_position {
-                DockPosition::Top => content.child(dock).child(reading).child(status_bar),
-                DockPosition::Bottom => content.child(reading).child(dock).child(status_bar),
-                DockPosition::Left => content
-                    .child(
-                        h_flex()
-                            .flex_1()
-                            .min_h_0()
-                            .items_stretch()
-                            .child(dock)
-                            .child(reading),
-                    )
-                    .child(status_bar),
-                DockPosition::Right => content
-                    .child(
-                        h_flex()
-                            .flex_1()
-                            .min_h_0()
-                            .items_stretch()
-                            .child(reading)
-                            .child(dock),
-                    )
-                    .child(status_bar),
-            }
-        };
-
-        let wheel_trigger = (self.settings.controls == ControlsStyle::Wheel).then(|| {
-            div()
-                .id("action-wheel-trigger")
-                .absolute()
-                .bottom(px(46.))
-                .right(px(22.))
-                .size(px(42.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_full()
-                .bg(cx.theme().popover)
-                .border_1()
-                .border_color(cx.theme().border)
-                .shadow_lg()
-                .cursor_pointer()
-                .hover(|style| style.bg(cx.theme().selection))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.overlay = Overlay::Wheel;
-                    cx.notify();
-                }))
-                .child(
-                    Icon::new(IconName::CircleEllipsis)
-                        .size(px(20.))
-                        .text_color(cx.theme().muted_foreground),
-                )
-        });
+            .text_color(cx.theme().foreground)
+            .child(
+                v_flex()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(div().flex_1().min_h_0().child(body))
+                    .children(input_bar)
+                    .children(notes)
+                    .children(dock),
+            )
+            .child(status_bar);
 
         div()
             .id("oma-bible-root")
             .key_context("OmaBible")
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::handle_key_down))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    let viewport = window.viewport_size();
+                    let center = chrome::clamp_wheel_center(event.position, viewport);
+                    this.open_wheel(Some(center), cx);
+                }),
+            )
             .relative()
             .size_full()
             .child(content)
-            .children(wheel_trigger)
             .children(overlay)
-    }
-}
-
-fn bottom_icon(
-    id: &'static str,
-    icon: IconName,
-    active: bool,
-    cx: &App,
-    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(id)
-        .size(px(34.))
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(9.))
-        .cursor_pointer()
-        .text_color(if active {
-            cx.theme().accent
-        } else {
-            cx.theme().muted_foreground
-        })
-        .hover(|style| {
-            style
-                .bg(cx.theme().selection)
-                .text_color(cx.theme().foreground)
-        })
-        .on_click(on_click)
-        .child(Icon::new(icon).size(px(18.)))
-}
-
-fn render_dock(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> AnyElement {
-    let vertical = matches!(app.settings.dock, DockPosition::Left | DockPosition::Right);
-    let tools = render_dock_tools(app, cx);
-
-    if vertical {
-        let mut dock = v_flex()
-            .id("shortcut-dock")
-            .h_full()
-            .w(px(50.))
-            .flex_shrink_0()
-            .items_center()
-            .justify_center()
-            .gap(px(2.))
-            .on_scroll(cx.listener(scroll_reading_by))
-            .border_color(cx.theme().border);
-        dock = if app.settings.dock == DockPosition::Left {
-            dock.border_r_1()
-        } else {
-            dock.border_l_1()
-        };
-        dock.children(tools).into_any_element()
-    } else {
-        let mut dock = h_flex()
-            .id("shortcut-dock")
-            .w_full()
-            .items_center()
-            .justify_center()
-            .px(px(12.))
-            .py(px(4.))
-            .gap(px(2.))
-            .on_scroll(cx.listener(scroll_reading_by))
-            .border_color(cx.theme().border);
-        dock = if app.settings.dock == DockPosition::Top {
-            dock.border_b_1()
-        } else {
-            dock.border_t_1()
-        };
-        dock.children(tools).into_any_element()
     }
 }
 
@@ -2417,65 +2378,6 @@ fn scroll_reading_by(
     let next = (offset.y + delta.y).clamp(-max.y, px(0.));
     app.reading_scroll.set_offset(point(offset.x, next));
     cx.notify();
-}
-
-fn render_dock_tools(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> Vec<AnyElement> {
-    let current = app.current_reference();
-    let bookmarked = current
-        .as_ref()
-        .is_some_and(|(translation, book, chapter, verse)| {
-            app.bookmarks
-                .find(translation, book, *chapter, *verse)
-                .is_some()
-        });
-    let has_note = current
-        .as_ref()
-        .and_then(|(translation, book, chapter, verse)| {
-            app.bookmarks.find(translation, book, *chapter, *verse)
-        })
-        .is_some_and(|bookmark| !bookmark.note.trim().is_empty());
-    let highlighted = current
-        .as_ref()
-        .is_some_and(|(translation, book, chapter, verse)| {
-            app.highlights
-                .find(translation, book, *chapter, *verse)
-                .is_some()
-        });
-
-    vec![
-        bottom_icon(
-            "dock-bookmark",
-            IconName::Bookmark,
-            bookmarked,
-            cx,
-            cx.listener(|this, _, _, cx| this.toggle_bookmark(cx)),
-        )
-        .into_any_element(),
-        bottom_icon(
-            "dock-note",
-            IconName::StickyNote,
-            has_note,
-            cx,
-            cx.listener(|this, _, window, cx| this.open_note_for_current_smart(window, cx)),
-        )
-        .into_any_element(),
-        bottom_icon(
-            "dock-highlight",
-            IconName::Highlighter,
-            highlighted,
-            cx,
-            cx.listener(|this, _, _, cx| this.open_highlight(cx)),
-        )
-        .into_any_element(),
-        bottom_icon(
-            "dock-settings",
-            IconName::Settings,
-            app.overlay == Overlay::Settings,
-            cx,
-            cx.listener(|this, _, _, cx| this.open_settings_sheet(cx)),
-        )
-        .into_any_element(),
-    ]
 }
 
 fn render_status_bar(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> AnyElement {
@@ -2539,7 +2441,7 @@ fn render_overlay(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> Option<An
         Overlay::Settings => Some(render_settings_sheet(app, cx)),
         Overlay::Highlight => Some(render_highlight_sheet(app, cx)),
         Overlay::NoteDetail => Some(render_note_detail(app, cx)),
-        Overlay::Wheel => Some(render_wheel_selector(app, cx)),
+        Overlay::Wheel => Some(chrome::render_wheel(app, cx)),
     }
 }
 
@@ -2646,179 +2548,9 @@ fn render_note_detail(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> AnyEl
     overlay_shell(cx, 600., card)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn wheel_action(
-    id: &'static str,
-    icon: IconName,
-    label: &'static str,
-    active: bool,
-    top: f32,
-    left: f32,
-    index: usize,
-    cx: &mut Context<OmaBibleApp>,
-) -> AnyElement {
-    div()
-        .id(id)
-        .absolute()
-        .top(px(top))
-        .left(px(left))
-        .w(px(76.))
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap(px(3.))
-        .cursor_pointer()
-        .on_click(cx.listener(move |this, _, window, cx| {
-            this.activate_wheel_item(index, window, cx);
-        }))
-        .child(
-            div()
-                .size(px(42.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_full()
-                .bg(if active {
-                    cx.theme().selection
-                } else {
-                    cx.theme().muted
-                })
-                .hover(|style| style.bg(cx.theme().selection))
-                .child(Icon::new(icon).size(px(19.)).text_color(if active {
-                    cx.theme().accent
-                } else {
-                    cx.theme().muted_foreground
-                })),
-        )
-        .child(
-            div()
-                .text_size(px(10.))
-                .text_color(cx.theme().muted_foreground)
-                .child(label),
-        )
-        .into_any_element()
-}
-
-/// The mouse-friendly alternative to the dock: four actions arranged in a
-/// wheel around the current reference.
-fn render_wheel_selector(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> AnyElement {
-    let current = app.current_reference();
-    let reference = current
-        .as_ref()
-        .map(|(_, book, chapter, verse)| format!("{book} {chapter}:{verse}"))
-        .unwrap_or_else(|| "No verse selected".to_string());
-    let bookmarked = current
-        .as_ref()
-        .is_some_and(|(translation, book, chapter, verse)| {
-            app.bookmarks
-                .find(translation, book, *chapter, *verse)
-                .is_some()
-        });
-    let has_note = current
-        .as_ref()
-        .and_then(|(translation, book, chapter, verse)| {
-            app.bookmarks.find(translation, book, *chapter, *verse)
-        })
-        .is_some_and(|bookmark| !bookmark.note.trim().is_empty());
-    let highlighted = current
-        .as_ref()
-        .is_some_and(|(translation, book, chapter, verse)| {
-            app.highlights
-                .find(translation, book, *chapter, *verse)
-                .is_some()
-        });
-
-    let wheel = div()
-        .id("action-wheel")
-        .relative()
-        .w(px(300.))
-        .h(px(300.))
-        .rounded_full()
-        .bg(cx.theme().popover)
-        .border_1()
-        .border_color(cx.theme().border)
-        .shadow_xl()
-        .on_click(|_, _, cx| cx.stop_propagation())
-        .child(
-            v_flex()
-                .absolute()
-                .top(px(122.))
-                .left_0()
-                .w_full()
-                .items_center()
-                .gap(px(3.))
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(cx.theme().foreground)
-                        .child(reference),
-                )
-                .child(
-                    div()
-                        .text_size(px(10.))
-                        .text_color(cx.theme().muted_foreground)
-                        .child("Space · Esc"),
-                ),
-        )
-        .child(wheel_action(
-            "wheel-bookmark",
-            IconName::Bookmark,
-            "Bookmark",
-            bookmarked,
-            10.,
-            112.,
-            0,
-            cx,
-        ))
-        .child(wheel_action(
-            "wheel-note",
-            IconName::StickyNote,
-            "Note",
-            has_note,
-            120.,
-            216.,
-            1,
-            cx,
-        ))
-        .child(wheel_action(
-            "wheel-highlight",
-            IconName::Highlighter,
-            "Highlight",
-            highlighted,
-            230.,
-            112.,
-            2,
-            cx,
-        ))
-        .child(wheel_action(
-            "wheel-settings",
-            IconName::Settings,
-            "Settings",
-            false,
-            120.,
-            8.,
-            3,
-            cx,
-        ));
-
-    div()
-        .id("overlay-scrim")
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .bg(rgba(0x00000066))
-        .on_click(cx.listener(|this, _, _, cx| this.close_overlay(cx)))
-        .child(wheel)
-        .into_any_element()
-}
-
 /// Civil date from a Unix timestamp, without pulling in a date crate:
 /// `9 Nov 2026`.
-fn format_note_date(seconds: u64) -> String {
+pub fn format_note_date(seconds: u64) -> String {
     const MONTHS: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
@@ -3087,7 +2819,7 @@ fn render_settings_sheet(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> An
         .translation()
         .map(|translation| format!("{} ({})", translation.name, translation.abbreviation))
         .unwrap_or_else(|| "None".into());
-    let mut rows: Vec<(IconName, &'static str, String, bool)> = vec![
+    let rows: Vec<(IconName, &'static str, String, bool)> = vec![
         (IconName::Palette, "Theme", theme_label, true),
         (IconName::Languages, "Translation", translation, true),
         (
@@ -3119,21 +2851,13 @@ fn render_settings_sheet(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> An
             false,
         ),
         (
-            IconName::CircleEllipsis,
-            "Quick controls",
-            app.settings.controls.label().into(),
-            false,
-        ),
-    ];
-    if app.settings.controls == ControlsStyle::Dock {
-        rows.push((
             IconName::PanelBottom,
-            "Dock edge",
+            "Dock",
             app.settings.dock.label().into(),
             false,
-        ));
-    }
-    rows.push((IconName::CircleQuestionMark, "Help", String::new(), true));
+        ),
+        (IconName::CircleQuestionMark, "Help", String::new(), true),
+    ];
 
     let card = v_flex()
         .w_full()
