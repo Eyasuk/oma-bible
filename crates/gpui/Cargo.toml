@@ -3,6 +3,11 @@ name = "oma-bible-gpui"
 version.workspace = true
 edition.workspace = true
 
+# The desktop app is the main one, so it gets the plain name.
+[[bin]]
+name = "oma-bible"
+path = "src/main.rs"
+
 [dependencies]
 oma-bible-core.workspace = true
 gpui-kit.workspace = true

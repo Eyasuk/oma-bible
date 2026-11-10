@@ -56,6 +56,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 appears_transparent: false,
                 traffic_light_position: None,
             }),
+            // The Wayland app id: Hyprland's window class, and the name the
+            // desktop entry matches.
+            app_id: Some("oma-bible".into()),
             ..Default::default()
         };
 

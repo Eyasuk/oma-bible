@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Oma Bible
+GenericName=Bible Reader
+Comment=Read and study the Bible
+Exec=oma-bible
+Icon=accessories-dictionary
+Terminal=false
+Categories=Education;Literature;
+Keywords=bible;scripture;reader;study;
+StartupWMClass=oma-bible

@@ -10,23 +10,45 @@ theme colours, restrained chrome, a centred reading column, and a muted footer.
 |---|---|
 | `crates/core` | Bible data model, JSON loading, HelloAO downloads, themes, persistence (`oma-bible-core`) |
 | `crates/tui` | Terminal reader (`oma-bible-tui`) |
-| `crates/gpui` | GPU-accelerated desktop app (`oma-bible-gpui`, GPUI + gpui-kit/components) |
+| `crates/bundle` | Rebuilds the built-in KJV data packs (`oma-bible-bundle`) |
+| `crates/gpui` | GPU-accelerated desktop app (package `oma-bible-gpui`, binary `oma-bible`; GPUI + gpui-kit/components) |
 
 The core crate has no UI dependencies, so front ends share the same models,
 loaders, download client, settings, bookmarks, and theme catalog.
 
-## Run
+## Install
 
-TUI:
+Download `oma-bible-<version>-x86_64-linux.tar.gz` from the
+[Releases](../../releases) page, then:
 
 ```bash
-cargo run -p oma-bible-tui
+tar -xzf oma-bible-0.1.0-x86_64-linux.tar.gz
+cd oma-bible-0.1.0-x86_64-linux
+./install.sh
 ```
 
-GPUI (desktop):
+That puts two programs in `~/.local/bin` and adds both to the app launcher:
+
+| Program | What it is |
+|---|---|
+| `oma-bible` | The desktop app (GPUI) |
+| `oma-bible-tui` | The terminal app |
+
+The King James Version and its study data are built in, so both work
+offline straight away.
+
+## Run from source
+
+Desktop (binary `oma-bible`):
 
 ```bash
 cargo run -p oma-bible-gpui
+```
+
+Terminal (binary `oma-bible-tui`):
+
+```bash
+cargo run -p oma-bible-tui
 ```
 
 The GPUI app is the primary desktop frontend: a single centred reading column,
@@ -313,6 +335,17 @@ resumes), then rebuild the apps:
 ```bash
 cargo run --release -p oma-bible-bundle
 ```
+
+## Releasing
+
+Releases are built by `.github/workflows/release.yml`:
+
+1. Set the version in `Cargo.toml` (`[workspace.package] version`) and commit.
+2. Tag and push: `git tag -a v0.2.0 -m "Oma Bible 0.2.0" && git push origin main v0.2.0`.
+3. GitHub Actions runs the tests, builds both apps on Ubuntu 22.04 and attaches
+   `oma-bible-<version>-x86_64-linux.tar.gz` (plus a `.sha256`) to a **draft**
+   release with generated notes.
+4. Edit the notes on GitHub and press **Publish release**.
 
 ## Checks
 

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Oma Bible (Terminal)
+GenericName=Bible Reader
+Comment=Read the Bible in the terminal
+Exec=oma-bible-tui
+Icon=accessories-dictionary
+Terminal=true
+Categories=Education;Literature;ConsoleOnly;
+Keywords=bible;scripture;reader;terminal;
