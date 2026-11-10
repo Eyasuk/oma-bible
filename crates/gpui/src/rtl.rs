@@ -7,12 +7,13 @@
 //! shapes each line on its own (the text system still joins letters and
 //! orders mixed runs within a line) and lines it up against the right edge.
 
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use gpui_kit::*;
 use oma_bible_core::direction::{Direction, direction_of};
 
 use crate::marker;
+use crate::words::{self, WordHits};
 
 /// A felt-tip highlight drawn under each line, as in [`crate::marker`].
 #[derive(Clone, Copy)]
@@ -28,7 +29,30 @@ pub struct RtlText {
     text: SharedString,
     highlight: Option<Highlight>,
     max_lines: Option<usize>,
+    hits: Option<WordHits>,
     state: Rc<RefCell<Layout>>,
+}
+
+/// Wrapped lines from earlier frames. The element is rebuilt every frame,
+/// so without this each redraw measured every word of every RTL verse again.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct WrapKey {
+    text: SharedString,
+    width: Option<u32>,
+    font_size: u32,
+    family: SharedString,
+    weight: u32,
+    max_lines: Option<usize>,
+}
+
+/// Enough for several chapters at a few widths; cleared when full.
+const WRAP_CACHE_LIMIT: usize = 4096;
+
+/// The wrapped lines of a paragraph and the size they take.
+type Wrapped = (Vec<SharedString>, Size<Pixels>);
+
+thread_local! {
+    static WRAP_CACHE: RefCell<HashMap<WrapKey, Wrapped>> = RefCell::new(HashMap::new());
 }
 
 #[derive(Default)]
@@ -44,12 +68,19 @@ impl RtlText {
             text: text.into(),
             highlight: None,
             max_lines: None,
+            hits: None,
             state: Rc::default(),
         }
     }
 
     pub fn highlight(mut self, highlight: Option<Highlight>) -> Self {
         self.highlight = highlight;
+        self
+    }
+
+    /// Records the laid-out lines so a click can find its word.
+    pub fn word_hits(mut self, hits: WordHits) -> Self {
+        self.hits = Some(hits);
         self
     }
 
@@ -128,6 +159,24 @@ impl Element for RtlText {
                 {
                     return size;
                 }
+                let key = WrapKey {
+                    text: text.clone(),
+                    width: wrap_width.map(|width| f32::from(width).to_bits()),
+                    font_size: f32::from(font_size).to_bits(),
+                    family: run.font.family.clone(),
+                    weight: run.font.weight.0.to_bits(),
+                    max_lines,
+                };
+                if let Some((lines, size)) =
+                    WRAP_CACHE.with(|cache| cache.borrow().get(&key).cloned())
+                {
+                    *state.borrow_mut() = Layout {
+                        lines,
+                        wrap_width,
+                        size: Some(size),
+                    };
+                    return size;
+                }
 
                 let measure = |text: &str, window: &mut Window| {
                     let run = TextRun {
@@ -161,8 +210,16 @@ impl Element for RtlText {
                         .fold(Pixels::ZERO, Pixels::max),
                 };
                 let size = size(width, line_height * lines.len() as f32);
+                let lines: Vec<SharedString> = lines.into_iter().map(SharedString::from).collect();
+                WRAP_CACHE.with(|cache| {
+                    let mut cache = cache.borrow_mut();
+                    if cache.len() >= WRAP_CACHE_LIMIT {
+                        cache.clear();
+                    }
+                    cache.insert(key, (lines.clone(), size));
+                });
                 *state.borrow_mut() = Layout {
-                    lines: lines.into_iter().map(SharedString::from).collect(),
+                    lines,
                     wrap_width,
                     size: Some(size),
                 };
@@ -196,6 +253,7 @@ impl Element for RtlText {
         let font_size = style.font_size.to_pixels(window.rem_size());
         let line_height = style.line_height_in_pixels(window.rem_size());
         let state = self.state.borrow();
+        let mut shaped_lines = Vec::with_capacity(state.lines.len());
 
         for (row, line) in state.lines.iter().enumerate() {
             let shaped = window.text_system().shape_line(
@@ -228,6 +286,14 @@ impl Element for RtlText {
                 window,
                 cx,
             );
+            shaped_lines.push(shaped);
+        }
+        if let Some(hits) = &self.hits {
+            *hits.borrow_mut() = Some(words::Layout::Rtl {
+                bounds,
+                line_height,
+                lines: shaped_lines,
+            });
         }
     }
 }

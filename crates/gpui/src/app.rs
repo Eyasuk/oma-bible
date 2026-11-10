@@ -269,7 +269,7 @@ impl OmaBibleApp {
                     .iter()
                     .position(|t| t.abbreviation.eq_ignore_ascii_case(abbr))
             })
-            .unwrap_or(0);
+            .unwrap_or_else(|| library.default_index());
 
         // Off Omarchy, start in the palette that matches the desktop's
         // light/dark appearance. A theme picked in the selector wins.
@@ -314,7 +314,10 @@ impl OmaBibleApp {
             theme_selected: 0,
             download_selected: 0,
             download_query: String::new(),
-            download_language: settings.download_language.clone(),
+            download_language: settings
+                .download_language
+                .clone()
+                .or_else(|| Some(oma_bible_core::bundle::DEFAULT_DOWNLOAD_LANGUAGE.to_string())),
             language_selected: 0,
             language_query: String::new(),
             study_selected: 0,
@@ -1283,6 +1286,15 @@ impl OmaBibleApp {
             Overlay::Explore => self.handle_explore_key(key, shift, cx),
             Overlay::Wheel => match key {
                 "escape" | "q" | "space" => self.close_overlay(cx),
+                // Circle the ring: clockwise and back.
+                "tab" if shift => self.step_wheel(-1, cx),
+                "l" | "j" | "right" | "down" | "tab" => self.step_wheel(1, cx),
+                "h" if !shift => self.step_wheel(-1, cx),
+                "k" | "left" | "up" => self.step_wheel(-1, cx),
+                "enter" => match self.wheel_hover {
+                    Some(tool) => self.run_tool(tool, window, cx),
+                    None => self.step_wheel(1, cx),
+                },
                 _ => {
                     let by_number = key
                         .parse::<usize>()
@@ -1681,6 +1693,22 @@ impl OmaBibleApp {
             Tool::Settings => self.open_settings_sheet(cx),
             Tool::Chapters => self.open_navigator(cx),
         }
+        cx.notify();
+    }
+
+    /// Move the wheel's pick one segment clockwise (`1`) or back (`-1`).
+    /// The first step from nothing lands on the top or the last segment.
+    fn step_wheel(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let count = Tool::WHEEL.len() as isize;
+        let next = match self
+            .wheel_hover
+            .and_then(|tool| Tool::WHEEL.iter().position(|item| *item == tool))
+        {
+            Some(index) => (index as isize + delta).rem_euclid(count),
+            None if delta > 0 => 0,
+            None => count - 1,
+        };
+        self.wheel_hover = Some(Tool::WHEEL[next as usize]);
         cx.notify();
     }
 
@@ -2690,6 +2718,7 @@ impl OmaBibleApp {
             "c" if self.screen == Screen::Reader && !shift => {
                 self.open_explore(ExploreTab::Commentary, cx)
             }
+            "w" if self.screen == Screen::Reader && !shift => self.open_word(None, cx),
             "t" if shift => self.open_themes(self.screen, cx),
             "T" => self.open_themes(self.screen, cx),
             "t" => self.open_translations(self.screen, cx),
@@ -3704,9 +3733,13 @@ fn render_settings_sheet(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> An
                                     .size(px(16.))
                                     .text_color(cx.theme().muted_foreground),
                             )
-                            .child(div().flex_1().text_size(px(14.)).child(label))
+                            .child(div().flex_shrink_0().text_size(px(14.)).child(label))
                             .child(
                                 div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_right()
                                     .text_size(px(12.))
                                     .text_color(cx.theme().muted_foreground)
                                     .child(value),
@@ -3779,81 +3812,103 @@ fn render_settings_sheet(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> An
 
 /// The commentaries the API offers, as a list under the settings row.
 fn commentary_dropdown(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> AnyElement {
+    // Indented under the row's label. The indent is padding on a full-width
+    // wrapper: a full-width list with a left margin would run past the
+    // sheet's right edge and be clipped.
     let shell = v_flex()
-        .w_full()
-        .mt(px(4.))
-        .mb(px(6.))
-        .ml(px(42.))
+        .flex_1()
+        .min_w_0()
         .p(px(4.))
         .rounded(px(12.))
         .bg(cx.theme().background)
         .border_1()
         .border_color(cx.theme().border);
     let Some(list) = app.commentary_options() else {
-        return shell
-            .child(
-                div()
-                    .px(px(12.))
-                    .py(px(10.))
-                    .text_size(px(13.))
-                    .text_color(cx.theme().muted_foreground)
-                    .child(match &app.explore.commentary_list {
-                        Some(explore::Fetch::Failed(error)) => {
-                            format!("Could not load commentaries: {error}")
-                        }
-                        _ => "Loading commentaries…".to_string(),
-                    }),
-            )
+        let shell = shell.child(
+            div()
+                .px(px(12.))
+                .py(px(10.))
+                .text_size(px(13.))
+                .text_color(cx.theme().muted_foreground)
+                .child(match &app.explore.commentary_list {
+                    Some(explore::Fetch::Failed(error)) => {
+                        format!("Could not load commentaries: {error}")
+                    }
+                    _ => "Loading commentaries…".to_string(),
+                }),
+        );
+        return h_flex()
+            .w_full()
+            .pt(px(4.))
+            .pb(px(6.))
+            .pl(px(42.))
+            .pr(px(4.))
+            .child(shell)
             .into_any_element();
     };
     let current = app.commentary_id();
-    let hover = cx.theme().muted;
-    shell
-        .children(list.iter().enumerate().map(|(index, commentary)| {
-            let id = commentary.id.clone();
-            let active = commentary.id == current;
-            let picked = index == app.commentary_pick;
-            h_flex()
-                .id(SharedString::from(format!("commentary-option-{index}")))
-                .w_full()
-                .items_center()
-                .gap(px(10.))
-                .px(px(12.))
-                .py(px(8.))
-                .rounded(px(9.))
-                .cursor_pointer()
-                .when(picked, |row| row.bg(cx.theme().selection))
-                .when(!picked, |row| row.hover(move |style| style.bg(hover)))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.choose_commentary(&id, cx);
-                    this.commentary_open = false;
-                }))
-                .child(
-                    div()
-                        .w(px(14.))
-                        .child(
-                            Icon::new(IconName::Check)
-                                .size(px(14.))
-                                .text_color(if active {
-                                    cx.theme().accent
-                                } else {
-                                    transparent_black()
-                                }),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .text_size(px(13.))
-                        .text_color(if active {
-                            cx.theme().accent
-                        } else {
-                            cx.theme().foreground
-                        })
-                        .child(commentary.title().to_string()),
-                )
-        }))
+    let list = shell.children(list.iter().enumerate().map(|(index, commentary)| {
+        let id = commentary.id.clone();
+        let active = commentary.id == current;
+        let picked = index == app.commentary_pick;
+        // One highlight only: hovering moves the keyboard pick.
+        h_flex()
+            .id(SharedString::from(format!("commentary-option-{index}")))
+            .w_full()
+            .min_w_0()
+            .items_center()
+            .gap(px(10.))
+            .px(px(12.))
+            .py(px(8.))
+            .rounded(px(9.))
+            .cursor_pointer()
+            .when(picked, |row| row.bg(cx.theme().selection))
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                if *hovered && this.commentary_pick != index {
+                    this.commentary_pick = index;
+                    cx.notify();
+                }
+            }))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.choose_commentary(&id, cx);
+                this.commentary_open = false;
+            }))
+            .child(
+                div()
+                    .w(px(14.))
+                    .child(
+                        Icon::new(IconName::Check)
+                            .size(px(14.))
+                            .text_color(if active {
+                                cx.theme().accent
+                            } else {
+                                transparent_black()
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(13.))
+                    .text_color(if active {
+                        cx.theme().accent
+                    } else {
+                        cx.theme().foreground
+                    })
+                    .child(commentary.title().to_string()),
+            )
+    }));
+    h_flex()
+        .w_full()
+        .min_w_0()
+        .pt(px(4.))
+        .pb(px(6.))
+        .pl(px(42.))
+        .pr(px(4.))
+        .child(list)
         .into_any_element()
 }
 

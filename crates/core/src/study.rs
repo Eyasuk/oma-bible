@@ -220,7 +220,11 @@ fn flatten(content: &Value) -> String {
 
 /// Reads `relative` from the cache, or downloads `url` and stores it.
 /// A 404 means the API has nothing there and returns `None`.
-fn cached(url: &str, relative: &str) -> Result<Option<Vec<u8>>, RemoteError> {
+pub(crate) fn cached(url: &str, relative: &str) -> Result<Option<Vec<u8>>, RemoteError> {
+    // Built into the app (KJV study data): no disk or network needed.
+    if let Some(body) = crate::bundle::get(relative) {
+        return Ok(Some(body));
+    }
     let path = cache_path(relative);
     if let Ok(body) = fs::read(&path) {
         return Ok(Some(body));
@@ -243,7 +247,7 @@ fn cache_path(relative: &str) -> PathBuf {
 }
 
 /// Keep ids to characters that are safe in a URL path and a file name.
-fn safe(value: &str) -> String {
+pub(crate) fn safe(value: &str) -> String {
     value
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))

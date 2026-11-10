@@ -1,5 +1,6 @@
-//! The study sheet for one verse: cross-references, a commentary, and the
-//! translation's footnotes, each on its own tab. Data comes from the Free
+//! The study sheet for one verse: cross-references, a commentary, the
+//! translation's footnotes and the original Hebrew or Greek words, each on
+//! its own tab. Data comes from the Free
 //! Use Bible API on demand and is cached on disk by the core crate.
 
 use std::collections::HashMap;
@@ -9,6 +10,7 @@ use gpui_kit::component::{ActiveTheme, Icon, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use oma_bible_core::bible::canon;
+use oma_bible_core::original::{self, ClickedWord, InterlinearChapter, LexiconEntry, OriginalWord};
 use oma_bible_core::study::{
     self, ChapterReferences, Commentary, CommentaryChapter, CrossReference,
 };
@@ -25,16 +27,23 @@ pub enum ExploreTab {
     References,
     Commentary,
     Footnotes,
+    Original,
 }
 
 impl ExploreTab {
-    const ALL: [Self; 3] = [Self::References, Self::Commentary, Self::Footnotes];
+    const ALL: [Self; 4] = [
+        Self::References,
+        Self::Commentary,
+        Self::Footnotes,
+        Self::Original,
+    ];
 
     fn label(self) -> &'static str {
         match self {
             Self::References => "Cross-references",
             Self::Commentary => "Commentary",
             Self::Footnotes => "Footnotes",
+            Self::Original => "Original",
         }
     }
 
@@ -72,6 +81,13 @@ pub struct Explore {
     pub references: HashMap<(String, u32), Fetch<ChapterReferences>>,
     pub commentaries: HashMap<(String, String, u32), Fetch<Option<CommentaryChapter>>>,
     pub commentary_list: Option<Fetch<Vec<Commentary>>>,
+    pub interlinear: HashMap<(String, u32), Fetch<InterlinearChapter>>,
+    pub lexicon: HashMap<String, Fetch<Option<LexiconEntry>>>,
+    /// The original word picked on the Original tab.
+    pub word: Option<usize>,
+    /// The word double-clicked in the reader, matched to an original word
+    /// once the chapter's words arrive.
+    pub clicked: Option<ClickedWord>,
     pub scroll: ScrollHandle,
 }
 
@@ -84,6 +100,10 @@ impl Default for Explore {
             references: HashMap::new(),
             commentaries: HashMap::new(),
             commentary_list: None,
+            interlinear: HashMap::new(),
+            lexicon: HashMap::new(),
+            word: None,
+            clicked: None,
             scroll: ScrollHandle::new(),
         }
     }
@@ -114,10 +134,21 @@ impl OmaBibleApp {
         };
         self.explore.tab = tab;
         self.explore.selected = 0;
+        self.explore.word = None;
+        self.explore.clicked = None;
         self.explore.target = Some(target);
+        self.explore.scroll.set_offset(point(px(0.), px(0.)));
         self.overlay = Overlay::Explore;
         self.load_explore(cx);
         cx.notify();
+    }
+
+    /// Open the Original tab on the selected verse, picking the original
+    /// word behind `clicked` when it can be matched.
+    pub fn open_word(&mut self, clicked: Option<ClickedWord>, cx: &mut Context<Self>) {
+        self.open_explore(ExploreTab::Original, cx);
+        self.explore.clicked = clicked;
+        self.ensure_word_lexicon(cx);
     }
 
     /// Fetch the list of commentaries once.
@@ -193,6 +224,27 @@ impl OmaBibleApp {
             .detach();
         }
 
+        let key = (book.clone(), chapter);
+        if !self.explore.interlinear.contains_key(&key) {
+            self.explore.interlinear.insert(key.clone(), Fetch::Loading);
+            let book = book.clone();
+            cx.spawn(async move |this, cx| {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move {
+                        original::interlinear(&book, chapter).map_err(|e| e.to_string())
+                    })
+                    .await;
+                this.update(cx, |app, cx| {
+                    app.explore.interlinear.insert(key, into_fetch(result));
+                    app.ensure_word_lexicon(cx);
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+        }
+
         let commentary = self.commentary_id();
         let key = (commentary.clone(), book.clone(), chapter);
         if !self.explore.commentaries.contains_key(&key) {
@@ -221,7 +273,98 @@ impl OmaBibleApp {
         self.explore.tab = tab;
         self.explore.selected = 0;
         self.explore.scroll.set_offset(point(px(0.), px(0.)));
+        if tab == ExploreTab::Original {
+            self.ensure_word_lexicon(cx);
+        }
         cx.notify();
+    }
+
+    /// The original words of the target verse.
+    fn target_words(&self) -> Option<Fetch<&[OriginalWord]>> {
+        let target = self.explore.target.as_ref()?;
+        let book = target.book_id.clone()?;
+        Some(
+            match self.explore.interlinear.get(&(book, target.chapter))? {
+                Fetch::Loading => Fetch::Loading,
+                Fetch::Failed(error) => Fetch::Failed(error.clone()),
+                Fetch::Ready(chapter) => Fetch::Ready(
+                    chapter
+                        .get(&target.verse)
+                        .map(Vec::as_slice)
+                        .unwrap_or_default(),
+                ),
+            },
+        )
+    }
+
+    /// The picked original word: chosen on the tab, else matched from the
+    /// word double-clicked in the reader, else the first.
+    fn picked_word(&self) -> Option<usize> {
+        let Some(Fetch::Ready(words)) = self.target_words() else {
+            return None;
+        };
+        if words.is_empty() {
+            return None;
+        }
+        self.explore
+            .word
+            .or_else(|| {
+                self.explore
+                    .clicked
+                    .as_ref()
+                    .and_then(|clicked| original::match_word(clicked, words))
+            })
+            .map(|index| index.min(words.len() - 1))
+            .or(Some(0))
+    }
+
+    fn pick_word(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.explore.word = Some(index);
+        self.ensure_word_lexicon(cx);
+        cx.notify();
+    }
+
+    /// Load the lexicon entry of the picked word.
+    fn ensure_word_lexicon(&mut self, cx: &mut Context<Self>) {
+        let Some(Fetch::Ready(words)) = self.target_words() else {
+            return;
+        };
+        let Some(strongs) = self
+            .picked_word()
+            .and_then(|index| words.get(index))
+            .and_then(|word| word.strongs.clone())
+        else {
+            return;
+        };
+        if self.explore.lexicon.contains_key(&strongs) {
+            return;
+        }
+        self.explore.lexicon.insert(strongs.clone(), Fetch::Loading);
+        cx.spawn(async move |this, cx| {
+            let id = strongs.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move { original::lexicon(&id).map_err(|e| e.to_string()) })
+                .await;
+            this.update(cx, |app, cx| {
+                app.explore.lexicon.insert(strongs, into_fetch(result));
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn step_word(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let count = match self.target_words() {
+            Some(Fetch::Ready(words)) => words.len(),
+            _ => 0,
+        };
+        if count == 0 {
+            return;
+        }
+        let current = self.picked_word().unwrap_or(0) as isize;
+        self.pick_word((current + delta).rem_euclid(count as isize) as usize, cx);
     }
 
     /// Switch to the next commentary the API offers.
@@ -308,6 +451,10 @@ impl OmaBibleApp {
             "1" => self.set_explore_tab(ExploreTab::References, cx),
             "2" => self.set_explore_tab(ExploreTab::Commentary, cx),
             "3" => self.set_explore_tab(ExploreTab::Footnotes, cx),
+            // Vim word motions walk the original words.
+            "w" if self.explore.tab == ExploreTab::Original => self.step_word(1, cx),
+            "b" if self.explore.tab == ExploreTab::Original => self.step_word(-1, cx),
+            "4" | "w" => self.set_explore_tab(ExploreTab::Original, cx),
             "c" => self.cycle_commentary(cx),
             "j" | "down" | "k" | "up" if self.explore.tab == ExploreTab::References => {
                 let count = self.reference_count();
@@ -408,6 +555,10 @@ pub fn render_explore(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> AnyEl
                 ExploreTab::References => app.reference_count(),
                 ExploreTab::Footnotes => footnotes.len(),
                 ExploreTab::Commentary => 0,
+                ExploreTab::Original => match app.target_words() {
+                    Some(Fetch::Ready(words)) => words.len(),
+                    _ => 0,
+                },
             };
             let hover = cx.theme().muted;
             h_flex()
@@ -439,12 +590,16 @@ pub fn render_explore(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> AnyEl
         ExploreTab::References => references_body(app, &target, cx),
         ExploreTab::Commentary => commentary_body(app, &target, cx),
         ExploreTab::Footnotes => footnotes_body(&footnotes, cx),
+        ExploreTab::Original => original_body(app, &target, cx),
     };
 
     let hint = match app.explore.tab {
         ExploreTab::References => "Tab switch · j/k move · Enter go to verse · Esc close",
         ExploreTab::Commentary => "Tab switch · j/k scroll · c next commentary · Esc close",
         ExploreTab::Footnotes => "Tab switch · Esc close",
+        ExploreTab::Original => {
+            "Tab switch · w/b next/previous word · j/k scroll · double-click a word in the text to look it up · Esc close"
+        }
     };
 
     let card = v_flex()
@@ -709,5 +864,230 @@ fn footnotes_body(footnotes: &[String], cx: &App) -> AnyElement {
                 .line_height(px(22.))
                 .child(crate::rtl::paragraph(note.clone(), None))
         }))
+        .into_any_element()
+}
+
+fn original_body(
+    app: &OmaBibleApp,
+    target: &ExploreTarget,
+    cx: &mut Context<OmaBibleApp>,
+) -> AnyElement {
+    if target.book_id.is_none() {
+        return message(
+            "This translation does not say which book this is. Download it again to see the original words.",
+            cx,
+        );
+    }
+    let words = match app.target_words() {
+        None | Some(Fetch::Loading) => return message("Loading the original words…", cx),
+        Some(Fetch::Failed(error)) => {
+            return message(format!("Could not load the original words: {error}"), cx);
+        }
+        Some(Fetch::Ready(words)) => words,
+    };
+    if words.is_empty() {
+        return message("No original-language words for this verse.", cx);
+    }
+    let picked = app.picked_word().unwrap_or(0);
+    let rtl = words.first().is_some_and(OriginalWord::is_rtl);
+    let muted = cx.theme().muted_foreground;
+    let accent = cx.theme().accent;
+    let border = cx.theme().border;
+
+    // What happened to the word double-clicked in the text.
+    let note = match &app.explore.clicked {
+        Some(clicked) if app.explore.word.is_none() => match original::match_word(clicked, words) {
+            Some(_) => format!(
+                "“{}” in the text",
+                clicked.text.trim_matches(|c: char| !c.is_alphanumeric())
+            ),
+            None => format!(
+                "“{}” cannot be linked to a single original word in this translation. Pick one below.",
+                clicked.text
+            ),
+        },
+        _ => "Pick a word to see what it means.".to_string(),
+    };
+
+    let chips = words.iter().enumerate().map(|(index, word)| {
+        let is_picked = index == picked;
+        let hover = cx.theme().muted;
+        v_flex()
+            .id(SharedString::from(format!("original-word-{index}")))
+            .items_center()
+            .gap(px(1.))
+            .px(px(10.))
+            .py(px(6.))
+            .rounded(px(10.))
+            .border_1()
+            .cursor_pointer()
+            .border_color(if is_picked { accent } else { border })
+            .when(is_picked, |chip| chip.bg(cx.theme().muted))
+            .when(!is_picked, |chip| chip.hover(move |style| style.bg(hover)))
+            .on_click(cx.listener(move |this, _, _, cx| this.pick_word(index, cx)))
+            .child(
+                div()
+                    .text_size(px(19.))
+                    .text_color(cx.theme().foreground)
+                    .child(word.text.clone()),
+            )
+            .child(
+                div()
+                    .text_size(px(10.))
+                    .text_color(muted)
+                    .child(word.transliteration.clone().unwrap_or_default()),
+            )
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(if is_picked { accent } else { muted })
+                    .child(word.gloss.clone().unwrap_or_else(|| "—".to_string())),
+            )
+    });
+
+    let flow = h_flex()
+        .w_full()
+        .flex_wrap()
+        .gap(px(6.))
+        .when(rtl, |flow| flow.flex_row_reverse())
+        .children(chips);
+
+    v_flex()
+        .w_full()
+        .gap(px(14.))
+        .child(div().text_size(px(12.)).text_color(muted).child(note))
+        .child(flow)
+        .when_some(words.get(picked), |body, word| {
+            body.child(word_detail(app, word, cx))
+        })
+        .child(
+            div()
+                .pt(px(6.))
+                .text_size(px(10.))
+                .line_height(px(15.))
+                .text_color(muted)
+                .child(
+                    "Words: Berean Standard Bible interlinear (public domain). Lexicon: STEPBible.org / Tyndale House brief lexicons (TBESH, TBESG), CC BY 4.0.",
+                ),
+        )
+        .into_any_element()
+}
+
+/// The picked word: its form, parsing, and the lexicon entry.
+fn word_detail(app: &OmaBibleApp, word: &OriginalWord, cx: &App) -> AnyElement {
+    let muted = cx.theme().muted_foreground;
+    let foreground = cx.theme().foreground;
+    let language = match word.language.as_str() {
+        "hebrew" => "Hebrew",
+        "aramaic" => "Aramaic",
+        "greek" => "Greek",
+        other => other,
+    };
+    let facts = [
+        Some(language.to_string()),
+        word.strongs
+            .clone()
+            .map(|strongs| format!("Strong's {strongs}")),
+        word.parsing.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|fact| !fact.is_empty())
+    .collect::<Vec<_>>()
+    .join(" · ");
+
+    let lexicon = match word
+        .strongs
+        .as_ref()
+        .and_then(|strongs| app.explore.lexicon.get(strongs))
+    {
+        _ if word.strongs.is_none() => message("No Strong's number for this word.", cx),
+        None | Some(Fetch::Loading) => message("Loading the lexicon…", cx),
+        Some(Fetch::Failed(error)) => message(format!("Could not load the lexicon: {error}"), cx),
+        Some(Fetch::Ready(None)) => message("No lexicon entry for this word.", cx),
+        Some(Fetch::Ready(Some(entry))) => v_flex()
+            .w_full()
+            .gap(px(14.))
+            .children(entry.senses.iter().map(|sense| {
+                v_flex()
+                    .w_full()
+                    .gap(px(6.))
+                    .child(
+                        h_flex()
+                            .items_baseline()
+                            .gap(px(8.))
+                            .child(
+                                div()
+                                    .text_size(px(20.))
+                                    .text_color(foreground)
+                                    .child(sense.lemma.clone()),
+                            )
+                            .child(div().text_size(px(12.)).text_color(muted).child(format!(
+                                "{} · {}",
+                                sense.transliteration, sense.part_of_speech
+                            ))),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(cx.theme().accent)
+                            .child(sense.gloss.clone()),
+                    )
+                    .children(sense.paragraphs().into_iter().map(|line| {
+                        div()
+                            .w_full()
+                            .text_size(px(14.))
+                            .line_height(px(22.))
+                            .text_color(foreground)
+                            .child(line)
+                    }))
+            }))
+            .into_any_element(),
+    };
+
+    v_flex()
+        .w_full()
+        .gap(px(10.))
+        .p(px(16.))
+        .rounded(px(12.))
+        .bg(cx.theme().background)
+        .border_1()
+        .border_color(cx.theme().border)
+        .child(
+            h_flex()
+                .items_baseline()
+                .gap(px(10.))
+                .child(
+                    div()
+                        .text_size(px(30.))
+                        .text_color(foreground)
+                        .child(word.text.clone()),
+                )
+                .child(
+                    div()
+                        .text_size(px(14.))
+                        .text_color(muted)
+                        .child(word.transliteration.clone().unwrap_or_default()),
+                ),
+        )
+        .child(div().text_size(px(12.)).text_color(muted).child(facts))
+        .when_some(word.parsing_full.clone(), |detail, parsing| {
+            detail.child(
+                div()
+                    .text_size(px(13.))
+                    .text_color(foreground)
+                    .child(parsing),
+            )
+        })
+        .when_some(word.gloss.clone(), |detail, gloss| {
+            detail.child(
+                div()
+                    .text_size(px(13.))
+                    .text_color(muted)
+                    .child(format!("In this verse: “{gloss}”")),
+            )
+        })
+        .child(div().h(px(1.)).w_full().bg(cx.theme().border))
+        .child(lexicon)
         .into_any_element()
 }

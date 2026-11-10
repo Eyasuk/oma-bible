@@ -10,13 +10,19 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use oma_bible_core::storage::DockPosition;
 
+use std::f32::consts::{FRAC_PI_2, TAU};
+
 use crate::app::OmaBibleApp;
 use crate::tools::Tool;
 
-const WHEEL_SIZE: f32 = 236.;
-const WHEEL_RADIUS: f32 = 84.;
-const WHEEL_BUTTON: f32 = 46.;
-const WHEEL_HUB: f32 = 100.;
+/// Outer and inner radius of the wheel's ring; the inside is a hole.
+const WHEEL_OUTER: f32 = 88.;
+const WHEEL_INNER: f32 = 46.;
+/// Width of the cut between two segments.
+const WHEEL_CUT: f32 = 5.;
+const WHEEL_ICON: f32 = 16.;
+const WHEEL_LABEL_GAP: f32 = 10.;
+const WHEEL_LABEL_HEIGHT: f32 = 28.;
 const EDGE_GAP: f32 = 14.;
 
 // ── Dock ────────────────────────────────────────────────────────────────
@@ -107,98 +113,204 @@ fn dock_button(app: &OmaBibleApp, tool: Tool, cx: &mut Context<OmaBibleApp>) -> 
 
 // ── Wheel ───────────────────────────────────────────────────────────────
 
-/// Keep a wheel opened near a window edge fully on screen.
+/// Keep a wheel opened near a window edge fully on screen, label included.
 pub fn clamp_wheel_center(position: Point<Pixels>, viewport: Size<Pixels>) -> Point<Pixels> {
-    let half = px(WHEEL_SIZE / 2. + 8.);
-    let clamp = |value: Pixels, extent: Pixels| {
-        if extent <= half * 2. {
+    let half = px(WHEEL_OUTER + 8.);
+    let below = px(WHEEL_OUTER + WHEEL_LABEL_GAP + WHEEL_LABEL_HEIGHT + 8.);
+    let clamp = |value: Pixels, low: Pixels, high: Pixels, extent: Pixels| {
+        if extent <= low + high {
             extent / 2.
         } else {
-            value.clamp(half, extent - half)
+            value.clamp(low, extent - high)
         }
     };
     point(
-        clamp(position.x, viewport.width),
-        clamp(position.y, viewport.height),
+        clamp(position.x, half, half, viewport.width),
+        clamp(position.y, half, below, viewport.height),
     )
 }
 
-/// A radial menu: tools on a ring, a hub in the middle that names whatever
-/// the pointer is over. Opens at the pointer on right-click, or centred with
-/// Space; number keys and the tools' own shortcuts work while it is open.
+/// Where the wheel's centre is in the window.
+fn wheel_center(app: &OmaBibleApp, window: &Window) -> Point<Pixels> {
+    app.wheel_center.unwrap_or_else(|| {
+        let viewport = window.viewport_size();
+        point(viewport.width / 2., viewport.height / 2.)
+    })
+}
+
+/// The tool under a window position, picked by angle like a pie menu, so
+/// the whole segment is the target and not just its icon. The hole in the
+/// middle and the space outside pick nothing.
+fn tool_at(center: Point<Pixels>, position: Point<Pixels>) -> Option<Tool> {
+    let dx = f32::from(position.x - center.x);
+    let dy = f32::from(position.y - center.y);
+    let distance = dx.hypot(dy);
+    if distance < WHEEL_INNER * 0.6 || distance > WHEEL_OUTER + 10. {
+        return None;
+    }
+    let count = Tool::WHEEL.len();
+    let step = TAU / count as f32;
+    // 0 at the top, growing clockwise.
+    let angle = (dy.atan2(dx) + FRAC_PI_2).rem_euclid(TAU);
+    let index = ((angle + step / 2.) / step) as usize % count;
+    Tool::WHEEL.get(index).copied()
+}
+
+/// A ring of tools cut into segments, with a hole in the middle. The
+/// pointer picks a segment by its angle; the keyboard circles it with
+/// h/l, the arrows or Tab and runs it with Enter. A small label under the
+/// ring names the picked tool and its key. Opens at the pointer on
+/// right-click, or centred with Space.
 pub fn render_wheel(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> AnyElement {
     let (title, hint) = match app.wheel_hover {
-        Some(tool) => (tool.label().to_string(), format!("Key  {}", tool.key())),
+        Some(tool) => (tool.label().to_string(), tool.key().to_string()),
         None => (
             app.current_reference()
                 .map(|(_, book, chapter, verse)| format!("{book} {chapter}:{verse}"))
                 .unwrap_or_else(|| "No verse".to_string()),
-            "Esc to close".to_string(),
+            "← → ↵".to_string(),
         ),
     };
 
-    let center = WHEEL_SIZE / 2.;
-    let count = Tool::WHEEL.len() as f32;
-    let buttons = Tool::WHEEL
-        .iter()
-        .enumerate()
-        .map(|(index, &tool)| {
-            let angle = std::f32::consts::TAU * index as f32 / count - std::f32::consts::FRAC_PI_2;
-            let left = center + WHEEL_RADIUS * angle.cos() - WHEEL_BUTTON / 2.;
-            let top = center + WHEEL_RADIUS * angle.sin() - WHEEL_BUTTON / 2.;
-            wheel_button(app, tool, left, top, cx)
-        })
-        .collect::<Vec<_>>();
+    let size = WHEEL_OUTER * 2.;
+    let count = Tool::WHEEL.len();
+    let step = TAU / count as f32;
+    let middle = (WHEEL_OUTER + WHEEL_INNER) / 2.;
 
-    let hub = v_flex()
+    let segment = cx.theme().popover;
+    let edge = cx.theme().border;
+    let picked_fill = cx.theme().accent;
+    let active_fill = cx.theme().selection;
+    let picked = app
+        .wheel_hover
+        .and_then(|tool| Tool::WHEEL.iter().position(|item| *item == tool));
+    let active: Vec<bool> = Tool::WHEEL
+        .iter()
+        .map(|tool| app.tool_active(*tool))
+        .collect();
+
+    let ring_active = active.clone();
+    let ring = canvas(
+        |_, _, _| (),
+        move |bounds, (), window, _| {
+            let center = bounds.center();
+            // A soft shadow: the ring again, dark and a little lower.
+            for (spread, alpha) in [(6., 0.10), (3., 0.14)] {
+                if let Some(path) = annulus(
+                    center + point(px(0.), px(spread * 0.6)),
+                    WHEEL_INNER - spread * 0.3,
+                    WHEEL_OUTER + spread,
+                ) {
+                    window.paint_path(path, black().opacity(alpha));
+                }
+            }
+            for (index, &is_active) in ring_active.iter().enumerate() {
+                let mid = step * index as f32 - FRAC_PI_2;
+                let fill = if picked == Some(index) {
+                    picked_fill
+                } else if is_active {
+                    active_fill
+                } else {
+                    segment
+                };
+                let (start, end) = (mid - step / 2., mid + step / 2.);
+                if let Some(path) = sector(center, start, end, PathBuilder::fill()) {
+                    window.paint_path(path, fill);
+                }
+                if picked != Some(index)
+                    && let Some(path) = sector(center, start, end, PathBuilder::stroke(px(1.)))
+                {
+                    window.paint_path(path, edge);
+                }
+            }
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full();
+
+    let icons = Tool::WHEEL.iter().enumerate().map(|(index, &tool)| {
+        let angle = step * index as f32 - FRAC_PI_2;
+        let x = WHEEL_OUTER + middle * angle.cos() - WHEEL_ICON / 2.;
+        let y = WHEEL_OUTER + middle * angle.sin() - WHEEL_ICON / 2.;
+        let color = if picked == Some(index) {
+            cx.theme().accent_foreground
+        } else if active[index] {
+            cx.theme().accent
+        } else {
+            cx.theme().muted_foreground
+        };
+        div()
+            .absolute()
+            .left(px(x))
+            .top(px(y))
+            .size(px(WHEEL_ICON))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_color(color)
+            .child(Icon::new(tool.icon()).size(px(WHEEL_ICON)))
+    });
+
+    let label = h_flex()
         .absolute()
-        .left(px(center - WHEEL_HUB / 2.))
-        .top(px(center - WHEEL_HUB / 2.))
-        .size(px(WHEEL_HUB))
-        .rounded_full()
-        .items_center()
+        .top(px(size + WHEEL_LABEL_GAP))
+        .left_0()
+        .w(px(size))
         .justify_center()
-        .gap(px(2.))
-        .px(px(8.))
-        .bg(cx.theme().muted)
         .child(
-            div()
-                .text_size(px(13.))
-                .text_center()
-                .line_clamp(2)
-                .text_color(cx.theme().foreground)
-                .child(title),
-        )
-        .child(
-            div()
-                .text_size(px(10.))
-                .text_color(cx.theme().muted_foreground)
-                .child(hint),
+            h_flex()
+                .h(px(WHEEL_LABEL_HEIGHT))
+                .items_center()
+                .gap(px(8.))
+                .px(px(12.))
+                .rounded_full()
+                .bg(cx.theme().popover)
+                .border_1()
+                .border_color(cx.theme().border)
+                .shadow_md()
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(cx.theme().foreground)
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .px(px(5.))
+                        .rounded(px(4.))
+                        .bg(cx.theme().muted)
+                        .text_size(px(10.))
+                        .text_color(cx.theme().muted_foreground)
+                        .child(hint),
+                ),
         );
 
     let wheel = div()
         .id("action-wheel")
         .relative()
         .flex_shrink_0()
-        .size(px(WHEEL_SIZE))
-        .rounded_full()
-        .bg(cx.theme().popover)
-        .border_1()
-        .border_color(cx.theme().border)
-        .shadow_xl()
-        .on_click(|_, _, cx| cx.stop_propagation())
-        .child(
-            div()
-                .absolute()
-                .left(px(center - WHEEL_RADIUS))
-                .top(px(center - WHEEL_RADIUS))
-                .size(px(WHEEL_RADIUS * 2.))
-                .rounded_full()
-                .border_1()
-                .border_color(cx.theme().border.opacity(0.5)),
-        )
-        .child(hub)
-        .children(buttons);
+        .size(px(size))
+        .cursor_pointer()
+        .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
+            let next = tool_at(wheel_center(this, window), event.position);
+            if next != this.wheel_hover {
+                this.wheel_hover = next;
+                cx.notify();
+            }
+        }))
+        .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
+            cx.stop_propagation();
+            // The hole in the middle is a way out, like the scrim.
+            match tool_at(wheel_center(this, window), event.position()) {
+                Some(tool) => this.run_tool(tool, window, cx),
+                None => this.close_overlay(cx),
+            }
+        }))
+        .child(ring)
+        .children(icons)
+        .child(label);
 
     let mut scrim = div()
         .id("overlay-scrim")
@@ -224,8 +336,8 @@ pub fn render_wheel(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> AnyElem
         Some(at) => scrim.child(
             div()
                 .absolute()
-                .left(at.x - px(center))
-                .top(at.y - px(center))
+                .left(at.x - px(WHEEL_OUTER))
+                .top(at.y - px(WHEEL_OUTER))
                 .child(wheel),
         ),
         None => scrim.flex().items_center().justify_center().child(wheel),
@@ -233,51 +345,51 @@ pub fn render_wheel(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> AnyElem
     scrim.into_any_element()
 }
 
-fn wheel_button(
-    app: &OmaBibleApp,
-    tool: Tool,
-    left: f32,
-    top: f32,
-    cx: &mut Context<OmaBibleApp>,
-) -> AnyElement {
-    let hovered = app.wheel_hover == Some(tool);
-    let active = app.tool_active(tool);
-    let (bg, fg) = if hovered {
-        (cx.theme().accent, cx.theme().accent_foreground)
-    } else if active {
-        (cx.theme().selection, cx.theme().accent)
-    } else {
-        (transparent_black(), cx.theme().muted_foreground)
+/// One ring segment from angle `start` to `end` (radians, clockwise from
+/// the x axis), inset so neighbouring segments leave an even cut.
+fn sector(
+    center: Point<Pixels>,
+    start: f32,
+    end: f32,
+    mut builder: PathBuilder,
+) -> Option<Path<Pixels>> {
+    let cut = WHEEL_CUT / 2.;
+    let steps = 14;
+    let at = |radius: f32, angle: f32| {
+        center + point(px(radius * angle.cos()), px(radius * angle.sin()))
     };
-    div()
-        .id(SharedString::from(format!("wheel-{}", tool.label())))
-        .absolute()
-        .left(px(left))
-        .top(px(top))
-        .size(px(WHEEL_BUTTON))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_full()
-        .cursor_pointer()
-        .bg(bg)
-        .text_color(fg)
-        .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-            let next = if *hovered {
-                Some(tool)
-            } else if this.wheel_hover == Some(tool) {
-                None
-            } else {
-                this.wheel_hover
-            };
-            if next != this.wheel_hover {
-                this.wheel_hover = next;
-                cx.notify();
-            }
-        }))
-        .on_click(cx.listener(move |this, _, window, cx| this.run_tool(tool, window, cx)))
-        .child(Icon::new(tool.icon()).size(px(19.)))
-        .into_any_element()
+    let (outer_start, outer_end) = (start + cut / WHEEL_OUTER, end - cut / WHEEL_OUTER);
+    let (inner_start, inner_end) = (start + cut / WHEEL_INNER, end - cut / WHEEL_INNER);
+    let mut points = Vec::with_capacity(steps * 2 + 2);
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32;
+        points.push(at(WHEEL_OUTER, outer_start + (outer_end - outer_start) * t));
+    }
+    for i in (0..=steps).rev() {
+        let t = i as f32 / steps as f32;
+        points.push(at(WHEEL_INNER, inner_start + (inner_end - inner_start) * t));
+    }
+    builder.add_polygon(&points, true);
+    builder.build().ok()
+}
+
+/// A full ring between two radii, used for the shadow.
+fn annulus(center: Point<Pixels>, inner: f32, outer: f32) -> Option<Path<Pixels>> {
+    let steps = 64;
+    let at = |radius: f32, angle: f32| {
+        center + point(px(radius * angle.cos()), px(radius * angle.sin()))
+    };
+    let mut builder = PathBuilder::fill();
+    let mut points: Vec<Point<Pixels>> = (0..=steps)
+        .map(|i| at(outer, TAU * i as f32 / steps as f32))
+        .collect();
+    points.extend(
+        (0..=steps)
+            .rev()
+            .map(|i| at(inner, TAU * i as f32 / steps as f32)),
+    );
+    builder.add_polygon(&points, true);
+    builder.build().ok()
 }
 
 // ── Notes stack ─────────────────────────────────────────────────────────
@@ -586,4 +698,36 @@ fn unit(seed: u32, salt: u32) -> f32 {
     x = x.wrapping_mul(0x297A_2D39);
     x ^= x >> 15;
     x as f32 / (u32::MAX as f32 + 1.)
+}
+
+#[cfg(test)]
+mod wheel_tests {
+    // Not `super::*`: GPUI's own `test` macro would shadow the std one.
+    use super::{Tool, WHEEL_INNER, WHEEL_OUTER, tool_at};
+    use gpui_kit::{point, px};
+
+    #[test]
+    fn segments_are_picked_by_angle_clockwise_from_the_top() {
+        let center = point(px(200.), px(200.));
+        let middle = (WHEEL_OUTER + WHEEL_INNER) / 2.;
+        let step = std::f32::consts::TAU / Tool::WHEEL.len() as f32;
+        for (index, tool) in Tool::WHEEL.iter().enumerate() {
+            // The middle of each segment, and a little either side of it.
+            for nudge in [-0.3, 0., 0.3] {
+                let angle = step * (index as f32 + nudge) - std::f32::consts::FRAC_PI_2;
+                let at = point(
+                    px(200. + middle * angle.cos()),
+                    px(200. + middle * angle.sin()),
+                );
+                assert_eq!(tool_at(center, at), Some(*tool), "segment {index}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_hole_and_the_outside_pick_nothing() {
+        let center = point(px(0.), px(0.));
+        assert_eq!(tool_at(center, point(px(0.), px(5.))), None);
+        assert_eq!(tool_at(center, point(px(WHEEL_OUTER + 40.), px(0.))), None);
+    }
 }

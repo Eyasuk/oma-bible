@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/tui", "crates/gpui"]
+members = ["crates/core", "crates/tui", "crates/gpui", "crates/bundle"]
 resolver = "3"
 
 [workspace.package]
@@ -15,6 +15,17 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 ratatui = "0.30.2"
 crossterm = "0.29.0"
 textwrap = "0.16.4"
+flate2 = "1.1.10"
 unicode-bidi = "0.3.18"
 unicode-width = "0.2.3"
 gpui-kit = "0.9.0"
+
+# GPUI, the JSON parser and the decompressor are slow unoptimised; build the
+# dependencies optimised even in debug so `cargo run` stays responsive.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

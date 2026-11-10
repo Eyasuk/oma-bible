@@ -4647,9 +4647,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "oma-bible-bundle"
+version = "0.1.0"
+dependencies = [
+ "oma-bible-core",
+ "reqwest",
+ "serde_json",
+]
+
+[[package]]
 name = "oma-bible-core"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "reqwest",
  "serde",
  "serde_json",

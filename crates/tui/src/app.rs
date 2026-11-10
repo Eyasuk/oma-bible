@@ -158,13 +158,17 @@ impl App {
         worker_tx: Sender<WorkerMessage>,
         worker_rx: Receiver<WorkerMessage>,
     ) -> Self {
-        let download_language = settings.download_language.clone();
+        let download_language = settings
+            .download_language
+            .clone()
+            .or_else(|| Some(oma_bible_core::bundle::DEFAULT_DOWNLOAD_LANGUAGE.to_string()));
+        let translation_index = library.default_index();
         let mut app = Self {
             library,
             themes,
             settings,
             bookmarks,
-            translation_index: 0,
+            translation_index,
             book_index: 0,
             chapter_index: 0,
             verse_index: 0,

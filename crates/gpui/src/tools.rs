@@ -19,17 +19,19 @@ pub enum Tool {
 impl Tool {
     /// The dock stays minimal: verse actions, then navigation and settings
     /// after a divider.
-    pub const DOCK: [Self; 6] = [
+    pub const DOCK: [Self; 7] = [
         Self::Bookmark,
         Self::Note,
         Self::Highlight,
         Self::Copy,
+        Self::Explore,
         Self::Chapters,
         Self::Settings,
     ];
 
-    /// The wheel has room for every tool, clockwise from the top.
-    pub const WHEEL: [Self; 8] = [
+    /// The wheel holds the reading actions, clockwise from the top.
+    /// Settings stays in the dock and on `,`.
+    pub const WHEEL: [Self; 7] = [
         Self::Chapters,
         Self::Bookmark,
         Self::Note,
@@ -37,7 +39,6 @@ impl Tool {
         Self::Copy,
         Self::Explore,
         Self::Study,
-        Self::Settings,
     ];
 
     pub fn icon(self) -> IconName {

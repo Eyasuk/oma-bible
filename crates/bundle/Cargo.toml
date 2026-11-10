@@ -1,0 +1,11 @@
+[package]
+name = "oma-bible-bundle"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "Builds the data packs built into Oma Bible (KJV and its study data)"
+
+[dependencies]
+oma-bible-core.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true

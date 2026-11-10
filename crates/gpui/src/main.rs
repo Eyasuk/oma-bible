@@ -9,6 +9,7 @@ mod reader;
 mod rtl;
 mod theme;
 mod tools;
+mod words;
 
 use app::run;
 

@@ -27,6 +27,17 @@ pub const API_BASE: &str = "https://bible.helloao.org";
 /// Catalogue id of the complete Amharic Bible (Old and New Testament).
 pub const AMHARIC_FULL_ID: &str = "amh_full";
 
+/// Clearer names for translations whose own names collide: both Amharic
+/// texts call themselves "መጽሐፍ ቅዱስ", though `amh_amh` is only the New
+/// Testament.
+pub fn preferred_name(id: &str) -> Option<&'static str> {
+    match id.to_ascii_lowercase().as_str() {
+        "amh_full" => Some("መጽሐፍ ቅዱስ"),
+        "amh_amh" => Some("አዲስ ኪዳን"),
+        _ => None,
+    }
+}
+
 /// The complete Amharic Bible as one JSON file, converted from
 /// wordproject.org by the `magna25/amharic-bible-json` project (MIT licence).
 pub const AMHARIC_FULL_URL: &str =
@@ -139,6 +150,11 @@ impl RemoteCatalog {
 
     fn new(mut translations: Vec<RemoteTranslation>) -> Self {
         translations.retain(|translation| !translation.id.trim().is_empty());
+        for translation in &mut translations {
+            if let Some(name) = preferred_name(&translation.id) {
+                translation.name = name.to_string();
+            }
+        }
         translations.sort_by(|left, right| {
             left.title()
                 .to_lowercase()
@@ -273,7 +289,11 @@ pub fn download_translation(
     }
     let url = format!("{API_BASE}/api/{id}/complete.simple.json");
     let contents = fetch_bytes(&url, control)?;
-    parse_complete(&contents)
+    let mut translation = parse_complete(&contents)?;
+    if let Some(name) = preferred_name(id) {
+        translation.name = name.to_string();
+    }
+    Ok(translation)
 }
 
 /// Where a catalogue entry is downloaded from, for status messages.
@@ -289,7 +309,7 @@ pub fn source_name(id: &str) -> &'static str {
 fn extra_translations() -> Vec<RemoteTranslation> {
     vec![RemoteTranslation {
         id: AMHARIC_FULL_ID.to_string(),
-        name: "መጽሐፍ ቅዱስ (ሙሉ)".to_string(),
+        name: "መጽሐፍ ቅዱስ".to_string(),
         english_name: "Amharic Bible (complete Old and New Testament)".to_string(),
         language: "amh".to_string(),
         language_name: "አማርኛ".to_string(),
@@ -407,7 +427,7 @@ fn parse_amharic_full(contents: &[u8]) -> Result<Translation, RemoteError> {
         .filter(|book| !book.chapters.is_empty())
         .collect();
 
-    let mut translation = Translation::new("መጽሐፍ ቅዱስ (ሙሉ)", "Amharic", AMHARIC_FULL_ID, books);
+    let mut translation = Translation::new("መጽሐፍ ቅዱስ", "Amharic", AMHARIC_FULL_ID, books);
     translation.joined_verses = true;
     Ok(translation)
 }

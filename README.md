@@ -55,6 +55,7 @@ in GPUI, `h` / `l` change chapters directly.
 | `H` | Highlight the selected verse (GPUI) |
 | `r` | Study the selected verse: cross-references, commentary, footnotes (GPUI) |
 | `c` | Open the study sheet on the commentary tab (GPUI) |
+| `w` / double-click a word | Original Hebrew or Greek words of the verse, with the lexicon (GPUI) |
 | `Ctrl+Shift+D` | Move the shortcut dock to the next edge, or hide it (GPUI) |
 | `Space` / right-click | Open the action wheel (GPUI) |
 | `S` | Bookmarks and study screen |
@@ -85,14 +86,17 @@ clears the selection. Highlights are drawn as a marker stroke under each line of
 words and stay visible while a verse is selected.
 
 The small pill at the bottom is the shortcut dock: bookmark, note, highlight,
-copy, chapters, and settings. `Ctrl+Shift+D` (or the Dock row in settings) moves it to the
+copy, study verse, chapters, and settings. `Ctrl+Shift+D` (or the Dock row in settings) moves it to the
 left, top, or right edge, or hides it; the choice is saved.
 
 Right-click anywhere in the text to open the action wheel around the pointer;
 the verse under the pointer becomes the selected one. `Space` opens it in the
-middle of the window. The hub names the tool under the pointer and its key. Press
-`1`–`8` or a tool's own key (`o`, `m`, `M`, `H`, `y`, `r`, `S`, `,`) to pick one, or `Esc`
-to close.
+middle of the window. The wheel is a ring cut into seven segments with a hole
+in the middle; pointing anywhere in a segment picks it, and a label under the
+ring names the picked tool and its key. Circle the ring with `l` / `j` / `→` /
+`↓` / `Tab` (clockwise) or `h` / `k` / `←` / `↑` / `Shift+Tab`, then press `Enter`.
+`1`–`7` or a tool's own key (`o`, `m`, `M`, `H`, `y`, `r`, `S`) runs one
+directly. `Esc`, `Space` or a click in the hole closes it.
 
 Notes in the open chapter lie in a loose pile at the middle of the right edge
 (the left edge when the dock is on the right), the back cards scattered at
@@ -108,16 +112,44 @@ Type a reference such as `John 3:16-18` in the field under the text and press
 starting with `>`. Notes live in `notes.json`; the first time it is missing, the
 notes already kept on bookmarks are copied in.
 
-The study sheet (`r`, `c`, or **Study verse** on the wheel) has three tabs:
+The study sheet (`r`, `c`, or **Study verse** on the wheel) has four tabs:
 **Cross-references** from the open-cross-ref dataset, strongest first, shown in
 the open translation (click one or press `Enter` to go there); **Commentary**
 from one of the API's commentaries (Matthew Henry by default; `c` or the
 commentary button switches, and **Settings → Commentary** opens a dropdown of
 every commentary; the choice is saved), showing the section that
-covers the verse; and **Footnotes** from the translation itself. `Tab`, `h` /
-`l` or `1`–`3` switch tabs. Study data is fetched once per chapter and cached in
+covers the verse; **Footnotes** from the translation itself; and **Original**,
+the verse word by word in Hebrew or Greek. `Tab`, `h` / `l` or `1`–`4` switch
+tabs. Study data is fetched once per chapter and cached in
 `$XDG_CACHE_HOME/oma-bible` for offline use. Section headings from the
 translation appear above the verses they introduce.
+
+### Original Hebrew and Greek words
+
+Double-click a word in the reader (or press `w` for the selected verse) to open
+the **Original** tab. It lists the verse's words in Hebrew (right to left) or
+Greek, each with its transliteration and English gloss. The picked word shows
+its Strong's number, full parsing ("Verb – Qal – Perfect – third person
+masculine singular") and its lexicon entry with every sense. Click a word or
+press `w` / `b` to move to the next or previous one.
+
+A double-clicked word is linked to its original word like this:
+
+- **English translations**: the word is matched to the interlinear's English
+  glosses (`heaven` finds הַשָּׁמַיִם "the heavens"). When a word appears more
+  than once, the one at the same place in the sentence wins. An older word with
+  no matching gloss (KJV "firmament", BSB "expanse") falls back to the word at
+  the same place.
+- **Hebrew and Greek translations**: matched on the original text, ignoring
+  vowel points and accents.
+- **Other languages** (Amharic, Arabic and so on): the sheet opens on the verse
+  and asks you to pick the word. Without word-alignment data for those
+  translations, a guess would be wrong more often than right.
+
+The words come from the Berean Standard Bible interlinear (public domain) and
+the definitions from the STEPBible brief lexicons (TBESH and TBESG,
+STEPBible.org / Tyndale House, CC BY 4.0), both served by the Free Use Bible
+API. Each chapter's words and each lexicon entry are fetched once and cached.
 
 Some translations have empty versification gaps (for example Revelation 1:5–6 in
 the Amharic text). The GPUI reader hides empty verses and `j` / `k` skip them.
@@ -198,15 +230,17 @@ button) and Refresh (same as `r`).
 
 - Catalogue: `GET /api/available_translations.json`
 - Translation: `GET /api/{id}/complete.simple.json`
-- Downloads are saved as JSON in the user data directory. There are no
-  built-in translations: a fresh install opens the download screen.
-- The last language filter is remembered in settings.
+- Downloads are saved as JSON in the user data directory. The King James
+  Version is built in (see below), so a fresh install opens on it; a
+  downloaded `eng_kjv` replaces the built-in copy.
+- The language filter starts on English and then remembers the last choice.
 
 Downloaded translations survive restarts. The reader shows exactly what the API
-provides; some API translations are incomplete (for example `amh_amh` is the
-New Testament only and is missing verses in the source data).
+provides; some API translations are incomplete (for example `amh_amh`, shown as
+**አዲስ ኪዳን**, is the New Testament only and is missing verses in the source
+data).
 
-The catalogue also lists **መጽሐፍ ቅዱስ (ሙሉ)** (`amh_full`), the complete Amharic
+The catalogue also lists **መጽሐፍ ቅዱስ** (`amh_full`), the complete Amharic
 Bible, Old and New Testament. It is not from the API: it is downloaded from
 [magna25/amharic-bible-json](https://github.com/magna25/amharic-bible-json)
 (converted from wordproject.org). The Amharic Bible joins some verses in print
@@ -254,6 +288,31 @@ sorted by name. Small sample files for the tests live in
 
 `OMA_BIBLE_DATA_DIR` also redirects downloads so a single override can point the
 whole app at a test library.
+
+## Built-in data
+
+The King James Version and its study data are built into both apps, so they
+work offline from the first start:
+
+| Pack (`crates/core/bundle/`) | Contents |
+|---|---|
+| `kjv.pack` | King James Version |
+| `cross-references.pack` | open-cross-ref cross-references for every chapter |
+| `commentary.pack` | Matthew Henry's commentary (the default) and the commentary list |
+| `interlinear.pack` | BSB interlinear: the original Hebrew and Greek words |
+| `lexicon.pack` | STEPBible brief lexicons (TBESH, TBESG) |
+
+Each pack is an index plus separately compressed entries, so opening a chapter
+inflates only that chapter. Study lookups try the built-in packs first, then
+the disk cache, then the API, so other commentaries still download on demand.
+
+To refresh the packs from the Free Use Bible API (about 21,700 requests, six
+at a time; raw downloads are kept in `target/bundle-cache` so a stopped run
+resumes), then rebuild the apps:
+
+```bash
+cargo run --release -p oma-bible-bundle
+```
 
 ## Checks
 

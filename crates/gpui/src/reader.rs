@@ -3,11 +3,13 @@ use gpui_kit::base::SelectableText;
 use gpui_kit::component::{ActiveTheme, Icon, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use oma_bible_core::original::ClickedWord;
 
 use crate::app::{NoteTarget, OmaBibleApp};
 use crate::marker::marker;
 use crate::rtl::{Highlight, RtlText};
 use crate::theme as app_theme;
+use crate::words::{self, WordHits};
 
 /// The reading surface: one quiet column, large type and no chrome.
 ///
@@ -136,6 +138,11 @@ impl RenderOnce for ReaderView {
                     let drag_app = app.clone();
                     let menu_app = app.clone();
                     let verse = verses[index].clone();
+                    // Where each word of the verse lands, for double-click
+                    // word lookup.
+                    let hits = WordHits::default();
+                    let click_hits = hits.clone();
+                    let word_count = verse.split_whitespace().count();
                     let verse_number = index as u32 + 1;
                     let headings: Vec<String> = chapter
                         .map(|chapter| {
@@ -190,9 +197,23 @@ impl RenderOnce for ReaderView {
                         .border_color(transparent_black())
                         // Press selects; drag across verses selects a range;
                         // Shift extends and Ctrl picks verses one by one.
+                        // A double-click looks the word up in the original
+                        // Hebrew or Greek.
                         .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
+                            let double = event.click_count == 2;
+                            let word = double
+                                .then(|| words::word_at(&click_hits, event.position))
+                                .flatten()
+                                .map(|hit| ClickedWord {
+                                    text: hit.text,
+                                    index: hit.index,
+                                    count: word_count,
+                                });
                             press_app.update(cx, |app, cx| {
                                 app.press_verse(index, event.modifiers, cx);
+                                if double {
+                                    app.open_word(word, cx);
+                                }
                             });
                         })
                         .on_mouse_move(move |event, _window, cx| {
@@ -264,13 +285,13 @@ impl RenderOnce for ReaderView {
                             .text_size(px(font_size))
                             .line_height(px(font_size * 1.62))
                             .text_color(cx.theme().foreground)
-                            .child(RtlText::new(verse).highlight(highlight.map(|color| {
-                                Highlight {
+                            .child(RtlText::new(verse).word_hits(hits).highlight(highlight.map(
+                                |color| Highlight {
                                     color: app_theme::highlight(color, cx),
                                     alpha: if dark { 0.30 } else { 0.34 },
                                     seed: verse_number.wrapping_mul(2_654_435_761) ^ chapter_number,
-                                }
-                            })))
+                                },
+                            )))
                             .into_any_element()
                     } else {
                         let style = TextStyleRefinement {
@@ -287,23 +308,24 @@ impl RenderOnce for ReaderView {
                         )
                         .document_order(index as u64)
                         .text_style(style);
-                        match highlight {
+                        let verse = SharedString::from(verse);
+                        div()
+                            .relative()
+                            .text_size(px(font_size))
+                            .line_height(px(font_size * 1.62))
+                            .child(words::recorder(verse.clone(), hits))
                             // A marker stroke under each line of words, not
                             // a box behind the verse.
-                            Some(color) => div()
-                                .relative()
-                                .text_size(px(font_size))
-                                .line_height(px(font_size * 1.62))
-                                .child(marker(
-                                    verse.into(),
+                            .when_some(highlight, |wrapper, color| {
+                                wrapper.child(marker(
+                                    verse,
                                     app_theme::highlight(color, cx),
                                     if dark { 0.30 } else { 0.34 },
                                     verse_number.wrapping_mul(2_654_435_761) ^ chapter_number,
                                 ))
-                                .child(text)
-                                .into_any_element(),
-                            None => text.into_any_element(),
-                        }
+                            })
+                            .child(text)
+                            .into_any_element()
                     };
 
                     row = row.child(div().flex_1().min_w_0().child(verse_text));

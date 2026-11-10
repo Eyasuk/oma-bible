@@ -419,6 +419,11 @@ pub fn detect_omarchy() -> bool {
     .iter()
     .filter_map(|key| env::var(key).ok())
     .any(|value| value.to_ascii_lowercase().contains("omarchy"))
+        // Launched from somewhere that drops the session variables (a
+        // systemd unit, another launcher): Omarchy's own theme state still
+        // gives it away.
+        || state_home()
+            .is_some_and(|state| state.join("omarchy/current/theme/colors.toml").is_file())
 }
 
 /// Turn `ethio-dusk` into `Ethio Dusk`.
