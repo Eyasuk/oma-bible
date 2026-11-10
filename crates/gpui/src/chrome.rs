@@ -4,6 +4,7 @@
 //! Each piece stays quiet until the pointer reaches it — dimmed, compact, or
 //! collapsed — so the reading column remains the only loud thing on screen.
 
+use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme, Icon, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -51,6 +52,9 @@ pub fn render_dock(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> Option<A
 
     let pill = if vertical { v_flex() } else { h_flex() }
         .id("shortcut-dock")
+        // Clicks on the dock must not reach the verse underneath; scrolling
+        // still moves the page.
+        .block_mouse_except_scroll()
         .items_center()
         .gap(px(2.))
         .p(px(4.))
@@ -203,6 +207,7 @@ pub fn render_wheel(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> AnyElem
         .left_0()
         .size_full()
         .bg(rgba(0x00000059))
+        .occlude()
         .on_click(cx.listener(|this, _, _, cx| this.close_overlay(cx)))
         .on_mouse_down(
             MouseButton::Right,
@@ -277,13 +282,16 @@ fn wheel_button(
 
 // ── Notes stack ─────────────────────────────────────────────────────────
 
-const STACK_WIDTH: f32 = 168.;
-const STACK_CARD: f32 = 78.;
-const STACK_STEP: f32 = 6.;
+const PILE_WIDTH: f32 = 196.;
+const PILE_CARD: f32 = 88.;
+const PILE_HEIGHT: f32 = 132.;
+const PILE_BEHIND: usize = 3;
+const LIST_WIDTH: f32 = 300.;
 
-/// The open chapter's notes as a pile of cards at the middle of the right
-/// edge (the left edge when the dock is there). Hovering fans the pile out
-/// into a list; clicking a card selects the verse and opens the note.
+/// The open chapter's notes at the middle of the right edge (the left edge
+/// when the dock is there). At rest they lie in a loose pile, the back cards
+/// tossed at random angles like a stack of screenshots; hovering spreads
+/// them into a column of separate cards. Clicking a card opens its notes.
 pub fn render_notes_stack(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> Option<AnyElement> {
     let notes = app.chapter_notes();
     if notes.is_empty() {
@@ -297,6 +305,8 @@ pub fn render_notes_stack(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> O
 
     let stack = div()
         .id("notes-stack")
+        // Clicks here must not select the verse underneath.
+        .occlude()
         .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
             if this.notes_expanded != *hovered {
                 this.notes_expanded = *hovered;
@@ -314,65 +324,90 @@ pub fn render_notes_stack(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> O
     Some(anchor.child(stack).into_any_element())
 }
 
-/// Collapsed: the note nearest the selected verse on top, up to two more
-/// cards peeking out underneath.
+/// First line of a note for a preview, without quote markers.
+fn preview(note: &str) -> String {
+    note.lines()
+        .map(|line| line.trim().trim_start_matches('>').trim())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Collapsed: the note nearest the selected verse lies straight on top;
+/// up to three more lie scattered underneath at their own angles.
 fn notes_pile(
     app: &OmaBibleApp,
-    notes: &[(usize, String)],
+    notes: &[(usize, u64, String)],
     cx: &mut Context<OmaBibleApp>,
 ) -> AnyElement {
     let front = notes
         .iter()
-        .find(|(verse, _)| *verse >= app.verse_index)
+        .find(|(verse, _, _)| *verse >= app.verse_index)
         .or(notes.last())
         .expect("notes is not empty");
-    let layers = notes.len().min(3);
-    let popover = cx.theme().popover;
-    let border = cx.theme().border;
+    let behind: Vec<u64> = notes
+        .iter()
+        .filter(|(_, id, _)| *id != front.1)
+        .map(|(_, id, _)| *id)
+        .take(PILE_BEHIND)
+        .collect();
+    let fill = cx.theme().popover;
+    let edge = cx.theme().border;
 
-    let mut pile = div()
-        .relative()
-        .w(px(STACK_WIDTH))
-        .h(px(STACK_CARD + STACK_STEP * (layers - 1) as f32))
-        .opacity(0.88);
-    for depth in (1..layers).rev() {
-        let inset = px(STACK_STEP * depth as f32);
-        pile = pile.child(
-            div()
-                .absolute()
-                .top(inset)
-                .left(inset)
-                .right(inset)
-                .h(px(STACK_CARD))
-                .rounded(px(12.))
-                .bg(popover)
-                .border_1()
-                .border_color(border)
-                .opacity(1. - 0.3 * depth as f32),
-        );
-    }
+    let scattered = canvas(
+        |_, _, _| (),
+        move |bounds, (), window, _| {
+            let centre = bounds.center();
+            for (depth, id) in behind.iter().enumerate().rev() {
+                let seed = *id as u32;
+                // Alternate sides so the pile fans both ways.
+                let side = if depth % 2 == 0 { 1.0 } else { -1.0 };
+                let angle = side * (3.0 + 4.5 * unit(seed, 1)) * std::f32::consts::PI / 180.;
+                let offset = point(
+                    px(side * (4.0 + 8.0 * unit(seed, 2))),
+                    px(-6.0 + 12.0 * unit(seed, 3)),
+                );
+                paint_card(
+                    window,
+                    centre + offset,
+                    PILE_WIDTH - 8.,
+                    PILE_CARD,
+                    angle,
+                    fill,
+                    edge,
+                );
+            }
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full();
 
     let card = v_flex()
         .absolute()
-        .top_0()
-        .left_0()
-        .right_0()
-        .h(px(STACK_CARD))
+        .left(px(0.))
+        .top(px((PILE_HEIGHT - PILE_CARD) / 2.))
+        .w(px(PILE_WIDTH))
+        .h(px(PILE_CARD))
         .px(px(12.))
-        .py(px(9.))
-        .gap(px(2.))
+        .py(px(10.))
+        .gap(px(3.))
         .rounded(px(12.))
-        .bg(popover)
+        .bg(fill)
         .border_1()
-        .border_color(border)
+        .border_color(edge)
         .shadow_md()
         .child(
             h_flex()
                 .justify_between()
                 .child(
-                    div()
+                    h_flex()
+                        .gap(px(5.))
+                        .items_center()
                         .text_size(px(11.))
                         .text_color(cx.theme().accent)
+                        .child(Icon::new(IconName::StickyNote).size(px(12.)))
                         .child(format!("Verse {}", front.0 + 1)),
                 )
                 .when(notes.len() > 1, |row| {
@@ -390,19 +425,25 @@ fn notes_pile(
         .child(
             div()
                 .text_size(px(12.))
-                .line_height(px(16.))
-                .line_clamp(2)
+                .line_height(px(17.))
+                .line_clamp(3)
                 .text_color(cx.theme().foreground)
-                .child(front.1.clone()),
+                .child(preview(&front.2)),
         );
 
-    pile.child(card).into_any_element()
+    div()
+        .relative()
+        .w(px(PILE_WIDTH))
+        .h(px(PILE_HEIGHT))
+        .child(scattered)
+        .child(card)
+        .into_any_element()
 }
 
-/// Expanded: every note in the chapter, newest verse order, scrollable.
+/// Expanded: every note in the chapter as its own card, in verse order.
 fn notes_list(
     app: &OmaBibleApp,
-    notes: &[(usize, String)],
+    notes: &[(usize, u64, String)],
     cx: &mut Context<OmaBibleApp>,
 ) -> AnyElement {
     let heading = app
@@ -410,57 +451,58 @@ fn notes_list(
         .zip(app.chapter())
         .map(|(book, chapter)| format!("{} {}", book.name, chapter.number))
         .unwrap_or_default();
-    let selection = cx.theme().selection;
-    let hover = cx.theme().muted;
+    let popover = cx.theme().popover;
+    let border = cx.theme().border;
+    let accent = cx.theme().accent;
 
-    let cards = notes.iter().map(|(verse, note)| {
-        let verse = *verse;
-        let card = v_flex()
-            .id(SharedString::from(format!("notes-card-{verse}")))
+    let cards = notes.iter().map(|(verse, id, note)| {
+        let (verse, id) = (*verse, *id);
+        let current = verse == app.verse_index;
+        v_flex()
+            .id(SharedString::from(format!("notes-card-{id}")))
             .w_full()
-            .gap(px(3.))
-            .px(px(10.))
-            .py(px(8.))
-            .rounded(px(10.))
+            .flex_shrink_0()
+            .gap(px(4.))
+            .px(px(14.))
+            .py(px(11.))
+            .rounded(px(12.))
+            .bg(popover)
+            .border_1()
+            .border_color(if current { accent.opacity(0.6) } else { border })
+            .shadow_md()
             .cursor_pointer()
-            .on_click(cx.listener(move |this, _, _, cx| this.open_chapter_note(verse, cx)))
+            .hover(move |style| style.border_color(accent.opacity(0.8)))
+            .on_click(cx.listener(move |this, _, _, cx| this.open_chapter_note(verse, id, cx)))
             .child(
                 div()
                     .text_size(px(11.))
-                    .text_color(cx.theme().accent)
+                    .text_color(accent)
                     .child(format!("Verse {}", verse + 1)),
             )
             .child(
                 div()
                     .text_size(px(13.))
                     .line_height(px(19.))
-                    .line_clamp(3)
+                    .line_clamp(4)
                     .text_color(cx.theme().foreground)
-                    .child(note.clone()),
-            );
-        if verse == app.verse_index {
-            card.bg(selection)
-        } else {
-            card.hover(move |style| style.bg(hover))
-        }
+                    .child(preview(note)),
+            )
     });
 
     v_flex()
-        .w(px(288.))
-        .p(px(6.))
-        .gap(px(4.))
-        .rounded(px(16.))
-        .bg(cx.theme().popover)
-        .border_1()
-        .border_color(cx.theme().border)
-        .shadow_xl()
+        .w(px(LIST_WIDTH))
+        .gap(px(8.))
         .child(
             h_flex()
+                .flex_shrink_0()
                 .justify_between()
-                .px(px(10.))
-                .pt(px(6.))
-                .pb(px(2.))
-                .text_size(px(11.))
+                .px(px(12.))
+                .py(px(6.))
+                .rounded_full()
+                .bg(popover)
+                .border_1()
+                .border_color(border)
+                .text_size(px(10.))
                 .text_color(cx.theme().muted_foreground)
                 .child(format!("NOTES · {}", heading.to_uppercase()))
                 .child(notes.len().to_string()),
@@ -468,10 +510,80 @@ fn notes_list(
         .child(
             v_flex()
                 .id("notes-stack-list")
-                .max_h(px(420.))
+                .max_h(px(460.))
                 .overflow_y_scroll()
-                .gap(px(2.))
+                .gap(px(8.))
+                .pb(px(6.))
                 .children(cards),
         )
         .into_any_element()
+}
+
+/// A card turned by `angle` radians around `centre`: soft shadow, border,
+/// then the opaque face.
+fn paint_card(
+    window: &mut Window,
+    centre: Point<Pixels>,
+    width: f32,
+    height: f32,
+    angle: f32,
+    fill: Hsla,
+    edge: Hsla,
+) {
+    let shadow = centre + point(px(0.), px(4.));
+    let layers = [
+        (shadow, 2.0, hsla(0., 0., 0., 0.22)),
+        (centre, 0.0, edge),
+        (centre, -1.0, fill),
+    ];
+    for (at, grow, color) in layers {
+        let outline = rounded_rect(at, width + grow * 2., height + grow * 2., 12. + grow, angle);
+        let mut builder = PathBuilder::fill();
+        builder.add_polygon(&outline, true);
+        if let Ok(path) = builder.build() {
+            window.paint_path(path, color);
+        }
+    }
+}
+
+fn rounded_rect(
+    centre: Point<Pixels>,
+    width: f32,
+    height: f32,
+    radius: f32,
+    angle: f32,
+) -> Vec<Point<Pixels>> {
+    let (hw, hh) = (width / 2., height / 2.);
+    let r = radius.min(hw).min(hh);
+    let corners = [
+        (hw - r, hh - r, 0.0),
+        (-hw + r, hh - r, 90.0),
+        (-hw + r, -hh + r, 180.0),
+        (hw - r, -hh + r, 270.0),
+    ];
+    let (sin, cos) = angle.sin_cos();
+    let (cx, cy) = (f32::from(centre.x), f32::from(centre.y));
+    let mut points = Vec::with_capacity(28);
+    for (x, y, start) in corners {
+        for step in 0..=6 {
+            let a = (start + 15.0 * step as f32).to_radians();
+            let (px_, py_) = (x + r * a.cos(), y + r * a.sin());
+            points.push(point(
+                px(cx + px_ * cos - py_ * sin),
+                px(cy + px_ * sin + py_ * cos),
+            ));
+        }
+    }
+    points
+}
+
+/// Deterministic value in [0, 1) so the pile keeps its shape between frames.
+fn unit(seed: u32, salt: u32) -> f32 {
+    let mut x = seed.wrapping_mul(0x9E37_79B9) ^ salt.wrapping_mul(0x85EB_CA6B);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x2C1B_3C6D);
+    x ^= x >> 12;
+    x = x.wrapping_mul(0x297A_2D39);
+    x ^= x >> 15;
+    x as f32 / (u32::MAX as f32 + 1.)
 }

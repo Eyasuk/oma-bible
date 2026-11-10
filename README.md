@@ -51,7 +51,7 @@ in GPUI, `h` / `l` change chapters directly.
 | `y` | Copy the selected verse (GPUI) |
 | `Ctrl+C` | Copy selected text; quit when nothing is selected (GPUI) |
 | `m` | Toggle a bookmark on the selected verse |
-| `M` | Add or edit a note for the selected verse |
+| `M` | Open the selected verse's notes, or write a new one (GPUI: a verse can hold many notes) |
 | `H` | Highlight the selected verse (GPUI) |
 | `Ctrl+Shift+D` | Move the shortcut dock to the next edge, or hide it (GPUI) |
 | `Space` / right-click | Open the action wheel (GPUI) |
@@ -70,19 +70,41 @@ In the GPUI reader, `y` copies the selected verse. To copy part of the text,
 drag across it — a selection can span several verses — or double-click a word,
 then press `Ctrl+C`. `Ctrl+C` with no selection quits.
 
+To change chapter with the mouse, click the `BOOK 1 ⌄` title above the text to
+open the book and chapter navigator, or use the `‹` / `›` arrows beside it for
+the previous or next chapter. The Chapters button in the dock and wheel opens
+the navigator too.
+
+To act on several verses at once, drag across them, Shift+click to extend from
+the selected verse, or Ctrl+click to pick verses one by one (they need not be
+next to each other). Bookmark, highlight, and copy then apply to every selected
+verse; `M` writes one note that starts with all selected verses quoted. `Esc`
+clears the selection. Highlights are drawn as a marker stroke under each line of
+words and stay visible while a verse is selected.
+
 The small pill at the bottom is the shortcut dock: bookmark, note, highlight,
-copy, and settings. `Ctrl+Shift+D` (or the Dock row in settings) moves it to the
+copy, chapters, and settings. `Ctrl+Shift+D` (or the Dock row in settings) moves it to the
 left, top, or right edge, or hides it; the choice is saved.
 
 Right-click anywhere in the text to open the action wheel around the pointer;
 the verse under the pointer becomes the selected one. `Space` opens it in the
 middle of the window. The hub names the tool under the pointer and its key. Press
-`1`–`6` or a tool's own key (`m`, `M`, `H`, `y`, `S`, `,`) to pick one, or `Esc`
+`1`–`7` or a tool's own key (`o`, `m`, `M`, `H`, `y`, `S`, `,`) to pick one, or `Esc`
 to close.
 
-Notes in the open chapter sit as a small stack of cards at the middle of the
-right edge (the left edge when the dock is on the right). Hover it to fan the
-cards out into a list; click a card to jump to that verse and read the note.
+Notes in the open chapter lie in a loose pile at the middle of the right edge
+(the left edge when the dock is on the right), the back cards scattered at
+random angles. Hover it to spread every note out as its own card; click one to
+jump to that verse and open its notes.
+
+A verse can carry any number of notes (GPUI). The notes sheet shows each note as
+a card: `j` / `k` pick one, `e` or `Enter` edits it, `x` deletes it, `n` writes
+a new one. In the note editor, `Enter` starts a new line, `Ctrl+Enter` saves,
+`Esc` cancels, and `Ctrl+I` quotes the note's verse (or the reader selection).
+Type a reference such as `John 3:16-18` in the field under the text and press
+`Enter` to quote any verse from the open translation. Quoted verses are lines
+starting with `>`. Notes live in `notes.json`; the first time it is missing, the
+notes already kept on bookmarks are copied in.
 
 Some translations have empty versification gaps (for example Revelation 1:5–6 in
 the Amharic text). The GPUI reader hides empty verses and `j` / `k` skip them.
@@ -94,7 +116,7 @@ applies it, and `x` removes the highlight. The number keys `1`–`4` pick a colo
 directly; `5` removes it.
 
 Inside the study panel: `j` / `k` select a bookmark, `Enter` jumps to it, `x`
-or `Delete` removes it, and `M` edits its note.
+or `Delete` removes it, and `M` opens its notes.
 
 Inside the Bible API browser: `j` / `k` select a translation, `Enter`
 downloads it, `/` searches, `l` changes the language filter, `r` refreshes the
@@ -187,6 +209,7 @@ for a complete Bible.
 | Settings | `$XDG_CONFIG_HOME/oma-bible/settings.json` | `OMA_BIBLE_CONFIG_DIR` |
 | Bookmarks and notes | `$XDG_STATE_HOME/oma-bible/bookmarks.json` | `OMA_BIBLE_STATE_DIR` |
 | Verse highlights (GPUI) | `$XDG_STATE_HOME/oma-bible/highlights.json` | `OMA_BIBLE_STATE_DIR` |
+| Study notes (GPUI) | `$XDG_STATE_HOME/oma-bible/notes.json` | `OMA_BIBLE_STATE_DIR` |
 
 `OMA_BIBLE_DATA_DIR` also redirects downloads so a single override can point the
 whole app at a test library.

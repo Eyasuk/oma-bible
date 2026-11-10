@@ -6,6 +6,7 @@ use gpui_kit::assets::IconName;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tool {
+    Chapters,
     Bookmark,
     Note,
     Highlight,
@@ -15,17 +16,20 @@ pub enum Tool {
 }
 
 impl Tool {
-    /// The dock stays minimal: verse actions, then settings after a divider.
-    pub const DOCK: [Self; 5] = [
+    /// The dock stays minimal: verse actions, then navigation and settings
+    /// after a divider.
+    pub const DOCK: [Self; 6] = [
         Self::Bookmark,
         Self::Note,
         Self::Highlight,
         Self::Copy,
+        Self::Chapters,
         Self::Settings,
     ];
 
     /// The wheel has room for every tool, clockwise from the top.
-    pub const WHEEL: [Self; 6] = [
+    pub const WHEEL: [Self; 7] = [
+        Self::Chapters,
         Self::Bookmark,
         Self::Note,
         Self::Highlight,
@@ -36,6 +40,7 @@ impl Tool {
 
     pub fn icon(self) -> IconName {
         match self {
+            Self::Chapters => IconName::BookOpen,
             Self::Bookmark => IconName::Bookmark,
             Self::Note => IconName::StickyNote,
             Self::Highlight => IconName::Highlighter,
@@ -47,6 +52,7 @@ impl Tool {
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::Chapters => "Chapters",
             Self::Bookmark => "Bookmark",
             Self::Note => "Note",
             Self::Highlight => "Highlight",
@@ -59,6 +65,7 @@ impl Tool {
     /// The reader shortcut that does the same thing, shown as a hint.
     pub fn key(self) -> &'static str {
         match self {
+            Self::Chapters => "o",
             Self::Bookmark => "m",
             Self::Note => "M",
             Self::Highlight => "H",
@@ -68,8 +75,9 @@ impl Tool {
         }
     }
 
-    /// Settings is app chrome, not a verse action; the dock separates it.
+    /// Navigation and settings are app chrome, not verse actions; the dock
+    /// separates them.
     pub fn is_verse_action(self) -> bool {
-        !matches!(self, Self::Study | Self::Settings)
+        !matches!(self, Self::Chapters | Self::Study | Self::Settings)
     }
 }

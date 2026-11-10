@@ -409,6 +409,192 @@ impl Highlights {
     }
 }
 
+/// One study note on a verse. A verse can carry any number of notes; each
+/// may quote other verses inline as plain text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StudyNote {
+    pub id: u64,
+    pub translation: String,
+    pub book: String,
+    pub chapter: u32,
+    pub verse: u32,
+    #[serde(default)]
+    pub body: String,
+    #[serde(default)]
+    pub created: u64,
+    #[serde(default)]
+    pub updated: u64,
+}
+
+impl StudyNote {
+    /// `John 3:16`, without the translation name.
+    pub fn reference(&self) -> String {
+        format!("{} {}:{}", self.book, self.chapter, self.verse)
+    }
+
+    fn is_on(&self, translation: &str, book: &str, chapter: u32) -> bool {
+        self.translation.eq_ignore_ascii_case(translation)
+            && self.book.eq_ignore_ascii_case(book)
+            && self.chapter == chapter
+    }
+}
+
+/// Every study note, in the order they were written.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Notes {
+    items: Vec<StudyNote>,
+}
+
+impl Notes {
+    /// Loads `notes.json`. The first time it is missing, the single notes
+    /// kept on bookmarks are copied in so nothing written earlier is lost.
+    pub fn load_or_import(bookmarks: &Bookmarks) -> Self {
+        let path = notes_path();
+        if let Some(notes) = Self::load_from(&path) {
+            return notes;
+        }
+        let mut notes = Self::default();
+        if path.exists() {
+            // A damaged file: start empty rather than overwrite it.
+            return notes;
+        }
+        notes.import_bookmark_notes(bookmarks);
+        if !notes.is_empty() {
+            let _ = notes.save_to(&path);
+        }
+        notes
+    }
+
+    pub fn load_from(path: impl AsRef<Path>) -> Option<Self> {
+        let contents = fs::read_to_string(path).ok()?;
+        serde_json::from_str(&contents).ok()
+    }
+
+    pub fn save(&self) -> io::Result<()> {
+        self.save_to(notes_path())
+    }
+
+    pub fn save_to(&self, path: impl AsRef<Path>) -> io::Result<()> {
+        write_json(path.as_ref(), self)
+    }
+
+    pub fn items(&self) -> &[StudyNote] {
+        &self.items
+    }
+
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    pub fn get(&self, id: u64) -> Option<&StudyNote> {
+        self.items.iter().find(|note| note.id == id)
+    }
+
+    /// Notes on one verse, oldest first.
+    pub fn for_verse(
+        &self,
+        translation: &str,
+        book: &str,
+        chapter: u32,
+        verse: u32,
+    ) -> Vec<&StudyNote> {
+        self.items
+            .iter()
+            .filter(|note| note.is_on(translation, book, chapter) && note.verse == verse)
+            .collect()
+    }
+
+    /// Notes in one chapter, in verse order and then oldest first.
+    pub fn for_chapter(&self, translation: &str, book: &str, chapter: u32) -> Vec<&StudyNote> {
+        let mut notes: Vec<&StudyNote> = self
+            .items
+            .iter()
+            .filter(|note| note.is_on(translation, book, chapter))
+            .collect();
+        notes.sort_by_key(|note| (note.verse, note.created, note.id));
+        notes
+    }
+
+    /// Adds a note and returns its id. Blank notes are not stored.
+    pub fn add(
+        &mut self,
+        translation: &str,
+        book: &str,
+        chapter: u32,
+        verse: u32,
+        body: &str,
+    ) -> Option<u64> {
+        let body = body.trim();
+        if body.is_empty() {
+            return None;
+        }
+        let id = self.next_id();
+        let now = now_seconds();
+        self.items.push(StudyNote {
+            id,
+            translation: translation.to_string(),
+            book: book.to_string(),
+            chapter,
+            verse,
+            body: body.to_string(),
+            created: now,
+            updated: now,
+        });
+        Some(id)
+    }
+
+    /// Replaces a note's text; an emptied note is removed.
+    pub fn update(&mut self, id: u64, body: &str) -> bool {
+        let body = body.trim();
+        if body.is_empty() {
+            return self.remove(id);
+        }
+        match self.items.iter_mut().find(|note| note.id == id) {
+            Some(note) => {
+                note.body = body.to_string();
+                note.updated = now_seconds();
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn remove(&mut self, id: u64) -> bool {
+        let before = self.items.len();
+        self.items.retain(|note| note.id != id);
+        before != self.items.len()
+    }
+
+    fn next_id(&self) -> u64 {
+        self.items.iter().map(|note| note.id).max().unwrap_or(0) + 1
+    }
+
+    fn import_bookmark_notes(&mut self, bookmarks: &Bookmarks) {
+        for bookmark in bookmarks.items() {
+            let body = bookmark.note.trim();
+            if body.is_empty() {
+                continue;
+            }
+            let id = self.next_id();
+            self.items.push(StudyNote {
+                id,
+                translation: bookmark.translation.clone(),
+                book: bookmark.book.clone(),
+                chapter: bookmark.chapter,
+                verse: bookmark.verse,
+                body: body.to_string(),
+                created: bookmark.created,
+                updated: bookmark.created,
+            });
+        }
+    }
+}
+
 pub fn settings_path() -> PathBuf {
     crate::config_dir().join("settings.json")
 }
@@ -419,6 +605,10 @@ pub fn bookmarks_path() -> PathBuf {
 
 pub fn highlights_path() -> PathBuf {
     crate::state_dir().join("highlights.json")
+}
+
+pub fn notes_path() -> PathBuf {
+    crate::state_dir().join("notes.json")
 }
 
 fn now_seconds() -> u64 {
@@ -545,5 +735,41 @@ mod tests {
 
         assert_eq!(loaded, bookmarks);
         assert_eq!(loaded.items()[0].note, "comfort");
+    }
+
+    #[test]
+    fn a_verse_holds_several_notes() {
+        let mut notes = Notes::default();
+        let first = notes.add("KJV", "John", 3, 16, "love").unwrap();
+        let second = notes.add("kjv", "john", 3, 16, "gift").unwrap();
+        notes.add("KJV", "John", 3, 1, "Nicodemus").unwrap();
+        assert!(notes.add("KJV", "John", 3, 2, "   ").is_none());
+
+        assert_ne!(first, second);
+        assert_eq!(notes.for_verse("KJV", "John", 3, 16).len(), 2);
+        let chapter: Vec<u32> = notes
+            .for_chapter("KJV", "John", 3)
+            .iter()
+            .map(|note| note.verse)
+            .collect();
+        assert_eq!(chapter, vec![1, 16, 16]);
+
+        assert!(notes.update(first, "God so loved"));
+        assert_eq!(notes.get(first).unwrap().body, "God so loved");
+        assert!(notes.update(second, ""));
+        assert_eq!(notes.len(), 2);
+    }
+
+    #[test]
+    fn bookmark_notes_are_imported_once() {
+        let mut bookmarks = Bookmarks::default();
+        bookmarks.set_note("KJV", "Psalm", 23, 1, "comfort");
+        bookmarks.toggle("KJV", "Psalm", 23, 2);
+        let mut notes = Notes::default();
+        notes.import_bookmark_notes(&bookmarks);
+
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes.items()[0].body, "comfort");
+        assert_eq!(notes.items()[0].reference(), "Psalm 23:1");
     }
 }

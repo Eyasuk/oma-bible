@@ -4,7 +4,7 @@ use std::thread;
 
 use gpui_kit::assets::{AllAssets, IconName};
 use gpui_kit::base::TextSelection;
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::{ActiveTheme, Icon, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -12,7 +12,7 @@ use oma_bible_core::{
     bible::{Library, Translation},
     fonts,
     remote::{self, DownloadControl, RemoteCatalog, RemoteTranslation},
-    storage::{Bookmark, Bookmarks, HighlightColor, Highlights, Settings},
+    storage::{Bookmark, Bookmarks, HighlightColor, Highlights, Notes, Settings},
     theme::ThemeCatalog,
 };
 
@@ -105,7 +105,6 @@ pub enum Screen {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputKind {
     Search,
-    Note,
     TranslationFilter,
     DownloadFilter,
     LanguageFilter,
@@ -121,6 +120,7 @@ pub enum Overlay {
     Settings,
     Highlight,
     NoteDetail,
+    NoteEditor,
     Wheel,
 }
 
@@ -154,11 +154,24 @@ pub struct NoteTarget {
     pub verse: u32,
 }
 
+/// A note being written or edited in the editor sheet.
+pub struct NoteEditor {
+    pub target: NoteTarget,
+    /// `None` for a new note.
+    pub id: Option<u64>,
+    pub body: Entity<TextareaState>,
+    /// Single-line field that inserts a quoted verse, e.g. `John 3:16-18`.
+    pub reference: Entity<InputState>,
+    /// Return to the verse's note list after saving or cancelling.
+    pub from_list: bool,
+}
+
 pub struct OmaBibleApp {
     pub library: Library,
     pub settings: Settings,
     pub bookmarks: Bookmarks,
     pub highlights: Highlights,
+    pub notes: Notes,
     pub themes: ThemeCatalog,
     pub screen: Screen,
     pub focus: FocusPane,
@@ -173,6 +186,11 @@ pub struct OmaBibleApp {
     pub pending_g: bool,
     /// Anchor of a Vim-style visual selection, as a zero-based verse index.
     pub visual_anchor: Option<usize>,
+    /// Verses added one by one with Ctrl+click, in verse order.
+    pub picked: Vec<usize>,
+    /// Verse where a left-button drag started; dragging over other verses
+    /// turns into a visual range from here.
+    pub drag_anchor: Option<usize>,
 
     // screen selections / state
     pub translation_selected: usize,
@@ -188,8 +206,12 @@ pub struct OmaBibleApp {
     pub highlight_selected: usize,
 
     pub input: Option<InputPrompt>,
-    pub note_target: Option<NoteTarget>,
     pub note_detail: Option<NoteTarget>,
+    /// Card picked in the verse's note list.
+    pub note_selected: usize,
+    pub note_editor: Option<NoteEditor>,
+    /// Give keyboard focus back to the reader on the next render.
+    refocus: bool,
 
     pub overlay: Overlay,
     /// Window position the wheel opens around; `None` centres it.
@@ -258,10 +280,12 @@ impl OmaBibleApp {
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
 
+        let notes = Notes::load_or_import(&bookmarks);
         let mut app = Self {
             library,
             settings: settings.clone(),
             bookmarks,
+            notes,
             highlights,
             themes,
             screen: Screen::Reader,
@@ -276,6 +300,8 @@ impl OmaBibleApp {
             status: "Ready".into(),
             pending_g: false,
             visual_anchor: None,
+            picked: Vec::new(),
+            drag_anchor: None,
             translation_selected: translation_index,
             translation_query: String::new(),
             theme_selected: 0,
@@ -288,8 +314,10 @@ impl OmaBibleApp {
             settings_selected: 0,
             highlight_selected: 0,
             input: None,
-            note_target: None,
             note_detail: None,
+            note_selected: 0,
+            note_editor: None,
+            refocus: false,
             overlay: Overlay::None,
             wheel_center: None,
             wheel_hover: None,
@@ -487,25 +515,31 @@ impl OmaBibleApp {
             .map(|anchor| (anchor.min(self.verse_index), anchor.max(self.verse_index)))
     }
 
-    /// Number of visible verses covered by the visual selection.
-    pub fn visual_verse_count(&self) -> usize {
-        let Some((start, end)) = self.visual_range() else {
-            return 0;
-        };
-        self.visible_verse_indices()
-            .into_iter()
-            .filter(|index| *index >= start && *index <= end)
-            .count()
+    /// Whether a verse is part of the current multi-verse selection.
+    pub fn in_selection(&self, index: usize) -> bool {
+        self.visual_range()
+            .is_some_and(|(start, end)| index >= start && index <= end)
+            || self.picked.binary_search(&index).is_ok()
     }
 
-    /// Visible verses an action should apply to: the visual range, or just
-    /// the cursor verse.
+    /// Whether more than the cursor verse is selected.
+    pub fn has_multi_selection(&self) -> bool {
+        self.visual_anchor.is_some() || !self.picked.is_empty()
+    }
+
+    /// Number of visible verses an action would apply to.
+    pub fn selection_count(&self) -> usize {
+        self.action_verse_indices().len()
+    }
+
+    /// Visible verses an action should apply to: every picked verse plus the
+    /// visual range, or just the cursor verse.
     fn action_verse_indices(&self) -> Vec<usize> {
         let visible = self.visible_verse_indices();
-        if let Some((start, end)) = self.visual_range() {
+        if self.has_multi_selection() {
             visible
                 .into_iter()
-                .filter(|index| *index >= start && *index <= end)
+                .filter(|index| self.in_selection(*index))
                 .collect()
         } else if visible.contains(&self.verse_index) {
             vec![self.verse_index]
@@ -514,10 +548,81 @@ impl OmaBibleApp {
         }
     }
 
+    /// Left-button press on a verse. A plain press selects it and starts a
+    /// possible drag; Shift extends a range from the cursor; Ctrl adds or
+    /// removes the verse from a set of picked verses.
+    pub fn press_verse(&mut self, index: usize, modifiers: Modifiers, cx: &mut Context<Self>) {
+        if modifiers.control || modifiers.platform {
+            if self.picked.is_empty() {
+                // Start the set from what is already selected.
+                self.picked = self.action_verse_indices();
+                self.visual_anchor = None;
+            }
+            match self.picked.binary_search(&index) {
+                Ok(position) => {
+                    self.picked.remove(position);
+                }
+                Err(position) => self.picked.insert(position, index),
+            }
+            self.drag_anchor = None;
+        } else if modifiers.shift {
+            self.picked.clear();
+            self.visual_anchor = self.visual_anchor.or(Some(self.verse_index));
+            self.drag_anchor = None;
+        } else {
+            self.clear_visual();
+            self.drag_anchor = Some(index);
+        }
+        self.verse_index = index;
+        self.announce_selection(cx);
+    }
+
+    /// The pointer moved over a verse with the left button held.
+    pub fn drag_over_verse(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(anchor) = self.drag_anchor else {
+            return;
+        };
+        if index == self.verse_index {
+            return;
+        }
+        self.visual_anchor = (index != anchor).then_some(anchor);
+        self.verse_index = index;
+        self.announce_selection(cx);
+    }
+
+    /// Right-click target: keep a selection the verse belongs to, otherwise
+    /// select just that verse.
+    pub fn menu_verse(&mut self, index: usize) {
+        if !self.in_selection(index) {
+            self.clear_visual();
+            self.verse_index = index;
+        }
+    }
+
+    pub fn end_drag(&mut self) {
+        self.drag_anchor = None;
+    }
+
+    fn announce_selection(&mut self, cx: &mut Context<Self>) {
+        if self.has_multi_selection() {
+            let count = self.selection_count();
+            self.set_status(
+                format!(
+                    "{count} verse{} selected · H highlight · y copy · Esc clear",
+                    if count == 1 { "" } else { "s" }
+                ),
+                cx,
+            );
+        } else {
+            self.status = "Ready".into();
+            cx.notify();
+        }
+    }
+
     pub fn toggle_visual(&mut self, cx: &mut Context<Self>) {
         if self.visual_anchor.take().is_none() {
             self.visual_anchor = Some(self.verse_index);
-            let count = self.visual_verse_count().max(1);
+            let count = self.selection_count().max(1);
             self.set_status(
                 format!(
                     "Visual · {count} verse{}",
@@ -532,6 +637,8 @@ impl OmaBibleApp {
 
     fn clear_visual(&mut self) {
         self.visual_anchor = None;
+        self.picked.clear();
+        self.drag_anchor = None;
     }
 
     /// Scroll the reader to a verse, accounting for skipped empty verses.
@@ -778,7 +885,7 @@ impl OmaBibleApp {
         cx.notify();
     }
 
-    fn prev_chapter(&mut self, cx: &mut Context<Self>) {
+    pub fn prev_chapter(&mut self, cx: &mut Context<Self>) {
         self.clear_visual();
         if self.chapter_index > 0 {
             self.chapter_index -= 1;
@@ -796,7 +903,7 @@ impl OmaBibleApp {
         self.reading_scroll.scroll_to_item(0);
         cx.notify();
     }
-    fn next_chapter(&mut self, cx: &mut Context<Self>) {
+    pub fn next_chapter(&mut self, cx: &mut Context<Self>) {
         self.clear_visual();
         let ch_count = self.book().map(|b| b.chapters.len()).unwrap_or(0);
         if self.chapter_index + 1 < ch_count {
@@ -914,6 +1021,9 @@ impl OmaBibleApp {
     }
 
     pub fn close_overlay(&mut self, cx: &mut Context<Self>) {
+        if self.note_editor.take().is_some() {
+            self.refocus = true;
+        }
         if self.overlay != Overlay::None {
             self.overlay = Overlay::None;
             cx.notify();
@@ -1116,11 +1226,29 @@ impl OmaBibleApp {
                     _ => {}
                 }
             }
-            Overlay::NoteDetail => match key {
-                "escape" | "q" => self.close_overlay(cx),
-                "e" | "enter" => self.edit_note_detail(window, cx),
-                _ => {}
-            },
+            Overlay::NoteDetail => {
+                let count = self
+                    .note_detail
+                    .clone()
+                    .map(|target| self.verse_notes(&target).len())
+                    .unwrap_or(0);
+                match key {
+                    "escape" | "q" => self.close_overlay(cx),
+                    "j" | "down" if count > 0 => {
+                        self.note_selected = (self.note_selected + 1) % count;
+                        cx.notify();
+                    }
+                    "k" | "up" if count > 0 => {
+                        self.note_selected = (self.note_selected + count - 1) % count;
+                        cx.notify();
+                    }
+                    "n" | "a" => self.new_note_from_detail(window, cx),
+                    "e" | "enter" => self.edit_note_detail(window, cx),
+                    "x" | "d" | "delete" => self.delete_selected_note(cx),
+                    _ => {}
+                }
+            }
+            Overlay::NoteEditor => {}
             Overlay::Wheel => match key {
                 "escape" | "q" | "space" => self.close_overlay(cx),
                 _ => {
@@ -1466,15 +1594,16 @@ impl OmaBibleApp {
                 .bookmarks
                 .find(&translation, &book, chapter, verse)
                 .is_some(),
-            Tool::Note => self
-                .bookmarks
-                .find(&translation, &book, chapter, verse)
-                .is_some_and(|bookmark| !bookmark.note.trim().is_empty()),
+            Tool::Note => !self
+                .notes
+                .for_verse(&translation, &book, chapter, verse)
+                .is_empty(),
             Tool::Highlight => self
                 .highlights
                 .find(&translation, &book, chapter, verse)
                 .is_some(),
             Tool::Settings => self.overlay == Overlay::Settings,
+            Tool::Chapters => self.overlay == Overlay::Navigator,
             Tool::Copy | Tool::Study => false,
         }
     }
@@ -1489,6 +1618,7 @@ impl OmaBibleApp {
             Tool::Copy => self.copy_current_verse(cx),
             Tool::Study => self.open_study(cx),
             Tool::Settings => self.open_settings_sheet(cx),
+            Tool::Chapters => self.open_navigator(cx),
         }
         cx.notify();
     }
@@ -1504,50 +1634,57 @@ impl OmaBibleApp {
         cx.notify();
     }
 
-    /// Notes attached to verses in the open chapter, in verse order.
-    pub fn chapter_notes(&self) -> Vec<(usize, String)> {
+    /// Notes on verses in the open chapter as `(verse index, note id,
+    /// text)`, in verse order.
+    pub fn chapter_notes(&self) -> Vec<(usize, u64, String)> {
         let (Some(translation), Some(book), Some(chapter)) =
             (self.translation(), self.book(), self.chapter())
         else {
             return Vec::new();
         };
-        let mut notes: Vec<(usize, String)> = self
-            .bookmarks
-            .items()
-            .iter()
-            .filter(|bookmark| {
-                bookmark.chapter == chapter.number
-                    && bookmark.verse >= 1
-                    && bookmark.book == book.name
-                    && bookmark
-                        .translation
-                        .eq_ignore_ascii_case(&translation.abbreviation)
-            })
-            .filter_map(|bookmark| {
-                let note = bookmark.note.trim();
-                (!note.is_empty()).then(|| (bookmark.verse as usize - 1, note.to_string()))
-            })
-            .collect();
-        notes.sort_by_key(|(verse, _)| *verse);
-        notes
+        self.notes
+            .for_chapter(&translation.abbreviation, &book.name, chapter.number)
+            .into_iter()
+            .filter(|note| note.verse >= 1)
+            .map(|note| (note.verse as usize - 1, note.id, note.body.clone()))
+            .collect()
     }
 
-    /// Select a verse from the notes stack and open its note.
-    pub fn open_chapter_note(&mut self, verse_index: usize, cx: &mut Context<Self>) {
+    /// Select a verse from the notes stack and open its notes, with the
+    /// clicked note picked.
+    pub fn open_chapter_note(&mut self, verse_index: usize, id: u64, cx: &mut Context<Self>) {
         self.verse_index = verse_index;
         self.scroll_to_verse(verse_index);
         self.notes_expanded = false;
-        if let Some((translation, book, chapter, verse)) = self.current_reference() {
-            self.open_note_detail(
-                NoteTarget {
-                    translation,
-                    book,
-                    chapter,
-                    verse,
-                },
-                cx,
-            );
+        if let Some(target) = self.current_target() {
+            self.open_note_detail(target, cx);
+            self.note_selected = self
+                .verse_notes(&self.note_detail.clone().expect("just set"))
+                .iter()
+                .position(|note| note.id == id)
+                .unwrap_or(0);
         }
+    }
+
+    /// The selected verse as a note target.
+    fn current_target(&self) -> Option<NoteTarget> {
+        self.current_reference()
+            .map(|(translation, book, chapter, verse)| NoteTarget {
+                translation,
+                book,
+                chapter,
+                verse,
+            })
+    }
+
+    /// Notes on a verse, oldest first.
+    pub fn verse_notes(&self, target: &NoteTarget) -> Vec<&oma_bible_core::storage::StudyNote> {
+        self.notes.for_verse(
+            &target.translation,
+            &target.book,
+            target.chapter,
+            target.verse,
+        )
     }
 
     pub fn open_highlight(&mut self, cx: &mut Context<Self>) {
@@ -1616,101 +1753,324 @@ impl OmaBibleApp {
         cx.notify();
     }
 
+    /// `M`: write a new note on the selected verse. With several verses
+    /// selected, the note starts with all of them quoted.
     pub fn open_note_for_current(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((translation, book, chapter, verse)) = self.current_reference() else {
+        let Some(target) = self.current_target() else {
             self.set_status("No verse selected", cx);
             return;
         };
-        let note = self
-            .bookmarks
-            .find(&translation, &book, chapter, verse)
-            .map(|b| b.note.clone())
-            .unwrap_or_default();
-        self.open_note_prompt(
-            NoteTarget {
-                translation,
-                book: book.clone(),
-                chapter,
-                verse,
-            },
-            note,
-            window,
-            cx,
-        );
+        let prefill = if self.has_multi_selection() {
+            let indices = self.action_verse_indices();
+            self.quote_verses(&indices)
+                .map(|quote| format!("{quote}\n\n"))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        self.clear_visual();
+        self.open_note_editor(target, None, prefill, false, window, cx);
     }
 
-    /// Show the existing note in a calm reading overlay.
+    /// Show the verse's notes as cards.
     pub fn open_note_detail(&mut self, target: NoteTarget, cx: &mut Context<Self>) {
         self.note_detail = Some(target);
+        self.note_selected = 0;
         self.overlay = Overlay::NoteDetail;
         cx.notify();
     }
 
-    /// Open the note detail when the verse has one, otherwise the editor.
+    /// The note tool: the verse's notes when it has any, otherwise a new one.
     pub fn open_note_for_current_smart(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((translation, book, chapter, verse)) = self.current_reference() else {
+        let Some(target) = self.current_target() else {
             self.set_status("No verse selected", cx);
             return;
         };
-        let note = self
-            .bookmarks
-            .find(&translation, &book, chapter, verse)
-            .map(|b| b.note.trim().to_string())
-            .unwrap_or_default();
-        if note.is_empty() {
+        if self.verse_notes(&target).is_empty() || self.has_multi_selection() {
             self.open_note_for_current(window, cx);
         } else {
-            self.open_note_detail(
-                NoteTarget {
-                    translation,
-                    book,
-                    chapter,
-                    verse,
-                },
-                cx,
-            );
+            self.open_note_detail(target, cx);
         }
     }
 
+    /// Open the editor on a new note (`id: None`) or an existing one.
+    pub fn open_note_editor(
+        &mut self,
+        target: NoteTarget,
+        id: Option<u64>,
+        prefill: String,
+        from_list: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let text = match id.and_then(|id| self.notes.get(id)) {
+            Some(note) => note.body.clone(),
+            None => prefill,
+        };
+        let body = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .auto_grow(8, 18)
+                .placeholder("Write your note… Shift+Enter or Enter for a new line")
+                .default_value(text)
+        });
+        let reference = cx
+            .new(|cx| InputState::new(window, cx).placeholder("Insert a verse, e.g. John 3:16-18"));
+        cx.subscribe_in(
+            &reference,
+            window,
+            |this, _state, event: &InputEvent, window, cx| {
+                if let InputEvent::PressEnter { .. } = event {
+                    this.insert_typed_reference(window, cx);
+                }
+            },
+        )
+        .detach();
+        let focus = body.read(cx).focus_handle(cx);
+        window.focus(&focus, cx);
+        self.note_editor = Some(NoteEditor {
+            target,
+            id,
+            body,
+            reference,
+            from_list,
+        });
+        self.overlay = Overlay::NoteEditor;
+        cx.notify();
+    }
+
+    /// Edit the note picked in the verse's list, or start one when empty.
     fn edit_note_detail(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(target) = self.note_detail.clone() else {
             self.close_overlay(cx);
             return;
         };
-        let note = self
-            .bookmarks
-            .find(
+        let id = self
+            .verse_notes(&target)
+            .get(self.note_selected)
+            .map(|note| note.id);
+        self.open_note_editor(target, id, String::new(), true, window, cx);
+    }
+
+    fn new_note_from_detail(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(target) = self.note_detail.clone() else {
+            return;
+        };
+        self.open_note_editor(target, None, String::new(), true, window, cx);
+    }
+
+    pub fn edit_note(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(target) = self.note_detail.clone() else {
+            return;
+        };
+        self.open_note_editor(target, Some(id), String::new(), true, window, cx);
+    }
+
+    pub fn delete_note(&mut self, id: u64, cx: &mut Context<Self>) {
+        if self.notes.remove(id) {
+            let _ = self.notes.save();
+            self.status = "Note deleted".into();
+        }
+        if let Some(target) = self.note_detail.clone() {
+            let count = self.verse_notes(&target).len();
+            self.note_selected = self.note_selected.min(count.saturating_sub(1));
+        }
+        cx.notify();
+    }
+
+    fn delete_selected_note(&mut self, cx: &mut Context<Self>) {
+        let Some(target) = self.note_detail.clone() else {
+            return;
+        };
+        if let Some(id) = self
+            .verse_notes(&target)
+            .get(self.note_selected)
+            .map(|note| note.id)
+        {
+            self.delete_note(id, cx);
+        }
+    }
+
+    pub fn save_note_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.note_editor.take() else {
+            return;
+        };
+        let text = editor.body.read(cx).value().to_string();
+        let target = editor.target.clone();
+        let reference = format!("{} {}:{}", target.book, target.chapter, target.verse);
+        self.status = match editor.id {
+            Some(id) if text.trim().is_empty() => {
+                self.notes.remove(id);
+                format!("Deleted note on {reference}")
+            }
+            Some(id) => {
+                self.notes.update(id, &text);
+                format!("Saved note on {reference}")
+            }
+            None => match self.notes.add(
                 &target.translation,
                 &target.book,
                 target.chapter,
                 target.verse,
-            )
-            .map(|b| b.note.clone())
-            .unwrap_or_default();
-        self.overlay = Overlay::None;
-        self.open_note_prompt(target, note, window, cx);
+                &text,
+            ) {
+                Some(_) => format!("Added note on {reference}"),
+                None => "Empty note discarded".to_string(),
+            },
+        }
+        .into();
+        let _ = self.notes.save();
+        window.focus(&self.focus_handle, cx);
+        if editor.from_list && !self.verse_notes(&target).is_empty() {
+            self.note_detail = Some(target);
+            self.overlay = Overlay::NoteDetail;
+        } else {
+            self.overlay = Overlay::None;
+        }
+        cx.notify();
     }
 
-    fn open_note_for_selected_bookmark(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let bm = self
+    pub fn cancel_note_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.note_editor.take() else {
+            return;
+        };
+        window.focus(&self.focus_handle, cx);
+        self.overlay = if editor.from_list {
+            Overlay::NoteDetail
+        } else {
+            Overlay::None
+        };
+        cx.notify();
+    }
+
+    /// Quote verses of the open chapter:
+    /// `> “text” — Book 3:16-18`.
+    fn quote_verses(&self, indices: &[usize]) -> Option<String> {
+        let (book, chapter) = (self.book()?, self.chapter()?);
+        quote(&book.name, chapter, indices)
+    }
+
+    /// Insert the note's own verse (or the reader selection) at the cursor.
+    pub fn insert_selected_verses(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.note_editor.as_ref() else {
+            return;
+        };
+        let target = editor.target.clone();
+        let body = editor.body.clone();
+        let indices = self.action_verse_indices();
+        let same_chapter = self
+            .current_reference()
+            .is_some_and(|(_, book, chapter, _)| book == target.book && chapter == target.chapter);
+        let indices = if same_chapter && !indices.is_empty() {
+            indices
+        } else {
+            vec![target.verse as usize - 1]
+        };
+        let text = self
+            .find_book(&target.book)
+            .and_then(|book| book.chapters.iter().find(|c| c.number == target.chapter))
+            .and_then(|chapter| quote(&target.book, chapter, &indices));
+        if let Some(text) = text {
+            insert_block(&body, &text, window, cx);
+        }
+    }
+
+    /// Insert the verse typed in the reference field.
+    pub fn insert_typed_reference(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.note_editor.as_ref() else {
+            return;
+        };
+        let (body, field) = (editor.body.clone(), editor.reference.clone());
+        let typed = field.read(cx).value().to_string();
+        if typed.trim().is_empty() {
+            return;
+        }
+        match self.lookup_reference(&typed) {
+            Some(text) => {
+                insert_block(&body, &text, window, cx);
+                field.update(cx, |state, cx| state.set_value("", window, cx));
+                let focus = body.read(cx).focus_handle(cx);
+                window.focus(&focus, cx);
+                self.status = "Verse inserted".into();
+            }
+            None => self.status = format!("No verse found for “{}”", typed.trim()).into(),
+        }
+        cx.notify();
+    }
+
+    fn find_book(&self, name: &str) -> Option<&oma_bible_core::bible::BibleBook> {
+        self.translation()?
+            .books
+            .iter()
+            .find(|book| book.name.eq_ignore_ascii_case(name))
+    }
+
+    /// `Book 3:16`, `Book 3:16-18` or `Book 3` (first verses) in the open
+    /// translation. The book matches by full name, then by prefix.
+    fn lookup_reference(&self, typed: &str) -> Option<String> {
+        let (book_part, place) = typed.trim().rsplit_once(char::is_whitespace)?;
+        let (chapter_part, verses_part) = match place.split_once(':') {
+            Some((chapter, verses)) => (chapter, Some(verses)),
+            None => (place, None),
+        };
+        let chapter_number: u32 = chapter_part.trim().parse().ok()?;
+        let wanted = book_part.trim().to_lowercase();
+        let books = &self.translation()?.books;
+        let book = books
+            .iter()
+            .find(|book| book.name.to_lowercase() == wanted)
+            .or_else(|| {
+                books
+                    .iter()
+                    .find(|book| book.name.to_lowercase().starts_with(&wanted))
+            })
+            .or_else(|| {
+                books
+                    .iter()
+                    .find(|book| book.name.to_lowercase().contains(&wanted))
+            })?;
+        let chapter = book.chapters.iter().find(|c| c.number == chapter_number)?;
+        let count = chapter.verses.len();
+        let (start, end) = match verses_part {
+            Some(verses) => match verses.split_once('-') {
+                Some((a, b)) => (a.trim().parse().ok()?, b.trim().parse().ok()?),
+                None => {
+                    let verse: usize = verses.trim().parse().ok()?;
+                    (verse, verse)
+                }
+            },
+            // A bare chapter quotes its opening verses only.
+            None => (1, count.min(3)),
+        };
+        if start == 0 || start > count {
+            return None;
+        }
+        let end = end.clamp(start, count).min(start + 29);
+        let indices: Vec<usize> = (start - 1..end).collect();
+        quote(&book.name, chapter, &indices)
+    }
+
+    /// Study screen `M`: the selected bookmark's notes.
+    fn open_notes_for_selected_bookmark(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bm) = self
             .bookmarks
             .items()
             .iter()
             .rev()
             .nth(self.study_selected)
-            .cloned();
-        if let Some(bm) = bm {
-            self.open_note_prompt(
-                NoteTarget {
-                    translation: bm.translation.clone(),
-                    book: bm.book.clone(),
-                    chapter: bm.chapter,
-                    verse: bm.verse,
-                },
-                bm.note,
-                window,
-                cx,
-            );
+            .cloned()
+        else {
+            return;
+        };
+        let target = NoteTarget {
+            translation: bm.translation,
+            book: bm.book,
+            chapter: bm.chapter,
+            verse: bm.verse,
+        };
+        if self.verse_notes(&target).is_empty() {
+            self.open_note_editor(target, None, String::new(), false, window, cx);
+        } else {
+            self.open_note_detail(target, cx);
         }
     }
 
@@ -1972,23 +2332,6 @@ impl OmaBibleApp {
             _ => {}
         }
     }
-    pub fn open_note_prompt(
-        &mut self,
-        target: NoteTarget,
-        note: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.note_target = Some(target.clone());
-        self.create_prompt(
-            InputKind::Note,
-            format!("Note · {} {}:{}", target.book, target.chapter, target.verse),
-            note,
-            window,
-            cx,
-        );
-    }
-
     pub fn commit_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(prompt) = self.input.take() else {
             return;
@@ -2014,29 +2357,11 @@ impl OmaBibleApp {
                 self.language_query = value.trim().to_string();
                 self.language_selected = 0;
             }
-            InputKind::Note => {
-                if let Some(target) = self.note_target.take() {
-                    self.bookmarks.set_note(
-                        &target.translation,
-                        &target.book,
-                        target.chapter,
-                        target.verse,
-                        &value,
-                    );
-                    let _ = self.bookmarks.save();
-                    self.status = format!(
-                        "Saved note for {} {}:{}",
-                        target.book, target.chapter, target.verse
-                    )
-                    .into();
-                }
-            }
         }
         cx.notify();
     }
     pub fn cancel_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.input = None;
-        self.note_target = None;
         window.focus(&self.focus_handle, cx);
         cx.notify();
     }
@@ -2052,6 +2377,18 @@ impl OmaBibleApp {
         let key = ks.key.as_str();
         let ctrl = ks.modifiers.control;
         let shift = ks.modifiers.shift;
+
+        // The note editor owns the keyboard; only its own shortcuts apply.
+        if self.note_editor.is_some() {
+            let command = ctrl || ks.modifiers.platform;
+            match key {
+                "escape" => self.cancel_note_editor(window, cx),
+                "enter" | "s" if command => self.save_note_editor(window, cx),
+                "i" if command => self.insert_selected_verses(window, cx),
+                _ => {}
+            }
+            return;
+        }
 
         if self.input.is_some() {
             match key {
@@ -2115,13 +2452,13 @@ impl OmaBibleApp {
 
         // Vim-style visual mode: movement extends the range and the usual
         // yank/bookmark/highlight keys act on the whole selection.
+        if self.has_multi_selection() && key == "escape" {
+            self.clear_visual();
+            self.set_status("Selection cleared", cx);
+            return;
+        }
         if self.visual_anchor.is_some() {
             match key {
-                "escape" => {
-                    self.visual_anchor = None;
-                    self.set_status("Visual off", cx);
-                    return;
-                }
                 "v" | "V" => {
                     self.toggle_visual(cx);
                     return;
@@ -2228,9 +2565,9 @@ impl OmaBibleApp {
             "y" if self.screen == Screen::Reader && !shift && !ctrl => self.copy_current_verse(cx),
             "m" if self.screen == Screen::Reader && !shift => self.toggle_bookmark(cx),
             "m" | "M" if self.screen == Screen::Reader && shift => {
-                self.open_note_for_current(window, cx)
+                self.open_note_for_current_smart(window, cx)
             }
-            "M" if self.screen == Screen::Reader => self.open_note_for_current(window, cx),
+            "M" if self.screen == Screen::Reader => self.open_note_for_current_smart(window, cx),
             "o" if self.screen == Screen::Reader => self.open_navigator(cx),
             "t" if shift => self.open_themes(self.screen, cx),
             "T" => self.open_themes(self.screen, cx),
@@ -2240,7 +2577,9 @@ impl OmaBibleApp {
             "s" if shift => self.open_study(cx),
             "S" => self.open_study(cx),
             "," => self.open_settings_sheet(cx),
-            "M" if self.screen == Screen::Study => self.open_note_for_selected_bookmark(window, cx),
+            "M" if self.screen == Screen::Study => {
+                self.open_notes_for_selected_bookmark(window, cx)
+            }
             "x" if self.screen == Screen::Study => self.remove_selected_bookmark(cx),
             "r" if self.screen == Screen::Downloads => self.refresh_catalog(cx),
             _ => {}
@@ -2261,6 +2600,56 @@ impl OmaBibleApp {
     }
 }
 
+/// `> “text” — Book 3:16-18` for verses of one chapter.
+fn quote(
+    book: &str,
+    chapter: &oma_bible_core::bible::Chapter,
+    indices: &[usize],
+) -> Option<String> {
+    let mut indices: Vec<usize> = indices
+        .iter()
+        .copied()
+        .filter(|index| {
+            chapter
+                .verses
+                .get(*index)
+                .is_some_and(|verse| !verse.trim().is_empty())
+        })
+        .collect();
+    indices.sort_unstable();
+    indices.dedup();
+    let (first, last) = (*indices.first()?, *indices.last()?);
+    let text = indices
+        .iter()
+        .map(|index| chapter.verses[*index].trim())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let contiguous = last - first + 1 == indices.len();
+    let verses = if first == last {
+        (first + 1).to_string()
+    } else if contiguous {
+        format!("{}-{}", first + 1, last + 1)
+    } else {
+        indices
+            .iter()
+            .map(|index| (index + 1).to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    Some(format!("> “{text}” — {book} {}:{verses}", chapter.number))
+}
+
+/// Insert a quoted block at the editor's cursor, on its own line.
+fn insert_block(
+    body: &Entity<TextareaState>,
+    text: &str,
+    window: &mut Window,
+    cx: &mut Context<OmaBibleApp>,
+) {
+    let block = format!("{text}\n");
+    body.update(cx, |state, cx| state.insert(block, window, cx));
+}
+
 fn step(index: usize, delta: isize, count: usize) -> usize {
     if count == 0 {
         return 0;
@@ -2269,7 +2658,10 @@ fn step(index: usize, delta: isize, count: usize) -> usize {
 }
 
 impl Render for OmaBibleApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if std::mem::take(&mut self.refocus) {
+            window.focus(&self.focus_handle, cx);
+        }
         self.poll_worker(cx);
         self.clamp_indices();
 
@@ -2298,12 +2690,9 @@ impl Render for OmaBibleApp {
                         .border_color(cx.theme().border)
                         .shadow_md()
                         .child(
-                            Icon::new(match prompt.kind {
-                                InputKind::Note => IconName::StickyNote,
-                                _ => IconName::Search,
-                            })
-                            .size(px(16.))
-                            .text_color(cx.theme().muted_foreground),
+                            Icon::new(IconName::Search)
+                                .size(px(16.))
+                                .text_color(cx.theme().muted_foreground),
                         )
                         .child(
                             div()
@@ -2349,6 +2738,10 @@ impl Render for OmaBibleApp {
             .key_context("OmaBible")
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::handle_key_down))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, _| this.end_drag()),
+            )
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(|this, event: &MouseDownEvent, window, cx| {
@@ -2391,11 +2784,11 @@ fn render_status_bar(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> AnyEle
                 .sum()
         })
         .unwrap_or(0);
-    let visual_count = app.visual_range().map(|_| app.visual_verse_count());
+    let visual_count = app.has_multi_selection().then(|| app.selection_count());
     let status = if let Some(count) = visual_count {
         Some(
             format!(
-                "VISUAL · {count} verse{}",
+                "{count} verse{} selected",
                 if count == 1 { "" } else { "s" }
             )
             .into(),
@@ -2441,111 +2834,362 @@ fn render_overlay(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> Option<An
         Overlay::Settings => Some(render_settings_sheet(app, cx)),
         Overlay::Highlight => Some(render_highlight_sheet(app, cx)),
         Overlay::NoteDetail => Some(render_note_detail(app, cx)),
+        Overlay::NoteEditor => Some(render_note_editor(app, cx)),
         Overlay::Wheel => Some(chrome::render_wheel(app, cx)),
     }
 }
 
-/// Render a saved note as a calm card: date and reference on top, then the
-/// note itself. The inline `Note · …` line in the reader stays in place and
-/// opens this view when clicked.
+/// The verse's notes, each on its own card, with a button for a new one.
 fn render_note_detail(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> AnyElement {
-    let Some(target) = app.note_detail.as_ref() else {
+    let Some(target) = app.note_detail.clone() else {
         return overlay_shell(
             cx,
             540.,
             div()
                 .p(px(24.))
                 .text_size(px(15.))
-                .child("This note is no longer available."),
+                .child("These notes are no longer available."),
         );
     };
-
-    let bookmark = app.bookmarks.find(
-        &target.translation,
-        &target.book,
-        target.chapter,
-        target.verse,
-    );
-    let note = bookmark
-        .map(|bookmark| bookmark.note.trim())
-        .filter(|note| !note.is_empty())
-        .unwrap_or("No note yet.");
-    let date = bookmark
-        .map(|bookmark| format_note_date(bookmark.created))
-        .unwrap_or_default();
+    let notes: Vec<(u64, String, u64)> = app
+        .verse_notes(&target)
+        .iter()
+        .map(|note| (note.id, note.body.clone(), note.updated.max(note.created)))
+        .collect();
     let reference = format!("{} {}:{}", target.book, target.chapter, target.verse);
+    let count = notes.len();
+
+    let cards = notes
+        .into_iter()
+        .enumerate()
+        .map(|(index, (id, body, date))| {
+            let picked = index == app.note_selected;
+            v_flex()
+                .id(SharedString::from(format!("note-card-{id}")))
+                .w_full()
+                .gap(px(10.))
+                .px(px(16.))
+                .py(px(14.))
+                .rounded(px(12.))
+                .bg(cx.theme().background)
+                .border_1()
+                .border_color(if picked {
+                    cx.theme().accent.opacity(0.7)
+                } else {
+                    cx.theme().border
+                })
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.note_selected = index;
+                    cx.notify();
+                }))
+                .child(note_body(&body, 15., cx))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(cx.theme().muted_foreground)
+                                .child(format_note_date(date)),
+                        )
+                        .child(
+                            h_flex()
+                                .gap(px(2.))
+                                .child(icon_button(
+                                    SharedString::from(format!("note-edit-{id}")),
+                                    IconName::Pencil,
+                                    cx,
+                                    move |this, window, cx| this.edit_note(id, window, cx),
+                                ))
+                                .child(icon_button(
+                                    SharedString::from(format!("note-delete-{id}")),
+                                    IconName::Trash,
+                                    cx,
+                                    move |this, _, cx| this.delete_note(id, cx),
+                                )),
+                        ),
+                )
+        })
+        .collect::<Vec<_>>();
 
     let card = v_flex()
         .w_full()
-        .max_w(px(600.))
         .rounded(px(18.))
         .bg(cx.theme().popover)
         .border_1()
         .border_color(cx.theme().border)
         .shadow_xl()
         .overflow_hidden()
+        .child(sheet_header("NOTES", reference, count.to_string(), cx))
         .child(
-            h_flex()
+            v_flex()
+                .id("note-detail-cards")
                 .w_full()
-                .items_start()
-                .justify_between()
-                .px(px(24.))
-                .pt(px(20.))
-                .pb(px(12.))
-                .child(
-                    v_flex()
-                        .gap(px(3.))
-                        .child(
-                            div()
-                                .text_size(px(11.))
-                                .text_color(cx.theme().muted_foreground)
-                                .child("NOTE"),
-                        )
-                        .child(div().text_size(px(18.)).child(reference)),
-                )
-                .child(
-                    div()
-                        .text_size(px(11.))
-                        .text_color(cx.theme().muted_foreground)
-                        .child(date),
-                ),
+                .max_h(px(460.))
+                .overflow_y_scroll()
+                .gap(px(10.))
+                .px(px(18.))
+                .pb(px(16.))
+                .children(cards)
+                .when(count == 0, |list| {
+                    list.child(
+                        div()
+                            .py(px(18.))
+                            .text_size(px(14.))
+                            .text_color(cx.theme().muted_foreground)
+                            .child("No notes on this verse yet."),
+                    )
+                }),
         )
+        .child(sheet_footer(
+            "n new · e edit · x delete · j/k move · Esc close",
+            text_button(
+                "note-new",
+                IconName::Plus,
+                "New note",
+                true,
+                cx,
+                |this, window, cx| this.new_note_from_detail(window, cx),
+            ),
+            cx,
+        ));
+
+    overlay_shell(cx, 620., card)
+}
+
+/// Writing a note: a roomy text area, then ways to pull scripture in.
+fn render_note_editor(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> AnyElement {
+    let Some(editor) = app.note_editor.as_ref() else {
+        return overlay_shell(cx, 540., div());
+    };
+    let target = &editor.target;
+    let reference = format!("{} {}:{}", target.book, target.chapter, target.verse);
+    let title = if editor.id.is_some() {
+        "EDIT NOTE"
+    } else {
+        "NEW NOTE"
+    };
+
+    let card = v_flex()
+        .w_full()
+        .rounded(px(18.))
+        .bg(cx.theme().popover)
+        .border_1()
+        .border_color(cx.theme().border)
+        .shadow_xl()
+        .overflow_hidden()
+        .child(sheet_header(title, reference, String::new(), cx))
         .child(
             div()
-                .id("note-detail-body")
-                .w_full()
-                .max_h(px(380.))
-                .overflow_y_scroll()
-                .px(px(24.))
-                .pb(px(18.))
-                .text_size(px(16.))
-                .line_height(px(26.))
-                .child(note.to_string()),
+                .px(px(18.))
+                .text_size(px(15.))
+                .line_height(px(24.))
+                .child(Textarea::new(&editor.body)),
         )
         .child(
             h_flex()
                 .w_full()
                 .items_center()
-                .justify_between()
-                .px(px(24.))
-                .py(px(12.))
-                .border_t_1()
-                .border_color(cx.theme().border)
+                .gap(px(8.))
+                .px(px(18.))
+                .pt(px(10.))
+                .pb(px(14.))
                 .child(
                     div()
-                        .text_size(px(11.))
-                        .text_color(cx.theme().muted_foreground)
-                        .child("e edit · Esc close"),
+                        .flex_1()
+                        .min_w_0()
+                        .child(Input::new(&editor.reference).cleanable(true)),
                 )
+                .child(text_button(
+                    "note-insert-typed",
+                    IconName::Plus,
+                    "Insert",
+                    false,
+                    cx,
+                    |this, window, cx| this.insert_typed_reference(window, cx),
+                ))
+                .child(text_button(
+                    "note-insert-selected",
+                    IconName::TextQuote,
+                    "Quote verse",
+                    false,
+                    cx,
+                    |this, window, cx| this.insert_selected_verses(window, cx),
+                )),
+        )
+        .child(sheet_footer(
+            "Ctrl+Enter save · Ctrl+I quote verse · Esc cancel",
+            text_button(
+                "note-save",
+                IconName::Check,
+                "Save",
+                true,
+                cx,
+                |this, window, cx| this.save_note_editor(window, cx),
+            ),
+            cx,
+        ));
+
+    overlay_shell(cx, 660., card)
+}
+
+/// Note text with `> ` lines set apart as quoted scripture.
+pub fn note_body(text: &str, size: f32, cx: &App) -> AnyElement {
+    let mut column = v_flex().w_full().gap(px(6.));
+    for line in text.lines() {
+        let line = line.trim_end();
+        if line.is_empty() {
+            continue;
+        }
+        column = match line.strip_prefix('>') {
+            Some(quoted) => column.child(
+                div()
+                    .w_full()
+                    .pl(px(12.))
+                    .border_l_2()
+                    .border_color(cx.theme().accent.opacity(0.6))
+                    .text_size(px(size - 1.))
+                    .line_height(px((size - 1.) * 1.55))
+                    .text_color(cx.theme().muted_foreground)
+                    .child(quoted.trim_start().to_string()),
+            ),
+            None => column.child(
+                div()
+                    .w_full()
+                    .text_size(px(size))
+                    .line_height(px(size * 1.6))
+                    .text_color(cx.theme().foreground)
+                    .child(line.to_string()),
+            ),
+        };
+    }
+    column.into_any_element()
+}
+
+fn sheet_header(
+    eyebrow: &'static str,
+    title: String,
+    aside: String,
+    cx: &mut Context<OmaBibleApp>,
+) -> AnyElement {
+    h_flex()
+        .w_full()
+        .items_start()
+        .justify_between()
+        .px(px(24.))
+        .pt(px(20.))
+        .pb(px(14.))
+        .child(
+            v_flex()
+                .gap(px(3.))
                 .child(
                     div()
                         .text_size(px(11.))
                         .text_color(cx.theme().muted_foreground)
-                        .child(target.translation.to_uppercase()),
-                ),
-        );
+                        .child(eyebrow),
+                )
+                .child(div().text_size(px(18.)).child(title)),
+        )
+        .child(
+            div()
+                .text_size(px(11.))
+                .text_color(cx.theme().muted_foreground)
+                .child(aside),
+        )
+        .into_any_element()
+}
 
-    overlay_shell(cx, 600., card)
+fn sheet_footer(
+    hint: &'static str,
+    action: impl IntoElement,
+    cx: &mut Context<OmaBibleApp>,
+) -> AnyElement {
+    h_flex()
+        .w_full()
+        .items_center()
+        .justify_between()
+        .px(px(18.))
+        .py(px(10.))
+        .border_t_1()
+        .border_color(cx.theme().border)
+        .child(
+            div()
+                .pl(px(6.))
+                .text_size(px(11.))
+                .text_color(cx.theme().muted_foreground)
+                .child(hint),
+        )
+        .child(action)
+        .into_any_element()
+}
+
+fn text_button(
+    id: &'static str,
+    icon: IconName,
+    label: &'static str,
+    primary: bool,
+    cx: &mut Context<OmaBibleApp>,
+    action: impl Fn(&mut OmaBibleApp, &mut Window, &mut Context<OmaBibleApp>) + 'static,
+) -> AnyElement {
+    let (bg, fg, hover) = if primary {
+        (
+            cx.theme().accent,
+            cx.theme().accent_foreground,
+            cx.theme().accent.opacity(0.85),
+        )
+    } else {
+        (
+            cx.theme().muted,
+            cx.theme().foreground,
+            cx.theme().selection,
+        )
+    };
+    h_flex()
+        .id(id)
+        .flex_shrink_0()
+        .items_center()
+        .gap(px(6.))
+        .px(px(12.))
+        .py(px(6.))
+        .rounded(px(10.))
+        .cursor_pointer()
+        .bg(bg)
+        .text_color(fg)
+        .text_size(px(12.))
+        .hover(move |style| style.bg(hover))
+        .on_click(cx.listener(move |this, _, window, cx| action(this, window, cx)))
+        .child(Icon::new(icon).size(px(14.)))
+        .child(label)
+        .into_any_element()
+}
+
+fn icon_button(
+    id: SharedString,
+    icon: IconName,
+    cx: &mut Context<OmaBibleApp>,
+    action: impl Fn(&mut OmaBibleApp, &mut Window, &mut Context<OmaBibleApp>) + 'static,
+) -> AnyElement {
+    let hover_bg = cx.theme().muted;
+    let hover_fg = cx.theme().foreground;
+    div()
+        .id(id)
+        .size(px(28.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .cursor_pointer()
+        .text_color(cx.theme().muted_foreground)
+        .hover(move |style| style.bg(hover_bg).text_color(hover_fg))
+        .on_click(cx.listener(move |this, _, window, cx| {
+            cx.stop_propagation();
+            action(this, window, cx);
+        }))
+        .child(Icon::new(icon).size(px(14.)))
+        .into_any_element()
 }
 
 /// Civil date from a Unix timestamp, without pulling in a date crate:
@@ -2583,6 +3227,8 @@ fn overlay_shell(
         .items_center()
         .justify_center()
         .bg(rgba(0x00000066))
+        // Swallow clicks and scrolling so the page behind stays put.
+        .occlude()
         .on_click(cx.listener(|this, _, _, cx| this.close_overlay(cx)))
         .child(
             div()
@@ -3132,7 +3778,7 @@ fn render_simple_screen(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> imp
                 "Choose a palette for the reader. Enter apply · Esc back"
             }
         }
-        Screen::Study => "Bookmarks and notes. Enter jump · M edit note · x remove · Esc back",
+        Screen::Study => "Bookmarks and notes. Enter jump · M notes · x remove · Esc back",
         Screen::Help => "Keyboard shortcuts and usage. Esc or q to close",
         Screen::Reader => "",
     };
@@ -3254,10 +3900,14 @@ fn render_simple_screen(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> imp
                     .rev()
                     .enumerate()
                     .map(|(i, bm)| {
-                        let note = if bm.note.trim().is_empty() {
-                            String::new()
-                        } else {
-                            format!(" — {}", bm.note.trim())
+                        let count = app
+                            .notes
+                            .for_verse(&bm.translation, &bm.book, bm.chapter, bm.verse)
+                            .len();
+                        let note = match count {
+                            0 => String::new(),
+                            1 => " — 1 note".to_string(),
+                            n => format!(" — {n} notes"),
                         };
                         (
                             format!("{} {}{}", bm.translation, bm.reference(), note),

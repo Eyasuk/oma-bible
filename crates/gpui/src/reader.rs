@@ -5,6 +5,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use crate::app::{NoteTarget, OmaBibleApp};
+use crate::marker::marker;
 use crate::theme as app_theme;
 
 /// The reading surface: one quiet column, large type and no chrome.
@@ -47,7 +48,6 @@ impl RenderOnce for ReaderView {
         let search_query = state.search_query.trim().to_string();
         let search_matches = state.search_matches.clone();
         let highlights = &state.highlights;
-        let visual = state.visual_range();
         let dark = state.themes.active().mode.is_dark();
         let scroll = &state.reading_scroll;
 
@@ -124,15 +124,11 @@ impl RenderOnce for ReaderView {
                         .px(px(40.))
                         .items_center()
                         .pb(px(52.))
-                        .child(
-                            div()
-                                .text_size(px(13.))
-                                .text_color(cx.theme().muted_foreground)
-                                .child(reference.to_uppercase()),
-                        ),
+                        .child(chapter_heading(&app, reference, cx)),
                 )
                 .children(visible_verses.into_iter().map(|index| {
-                    let row_app = app.clone();
+                    let press_app = app.clone();
+                    let drag_app = app.clone();
                     let menu_app = app.clone();
                     let verse = verses[index].clone();
                     let verse_number = index as u32 + 1;
@@ -142,14 +138,16 @@ impl RenderOnce for ReaderView {
                         chapter_number,
                         verse_number,
                     );
-                    let has_note =
-                        bookmark.is_some_and(|bookmark| !bookmark.note.trim().is_empty());
+                    let note_count = state
+                        .notes
+                        .for_verse(&translation_abbr, &book_name, chapter_number, verse_number)
+                        .len();
+                    let has_note = note_count > 0;
                     let highlight = highlights
                         .find(&translation_abbr, &book_name, chapter_number, verse_number)
                         .map(|highlight| highlight.color);
                     let is_selected = index == selected;
-                    let in_visual =
-                        visual.is_some_and(|(start, end)| index >= start && index <= end);
+                    let in_visual = state.in_selection(index);
                     let is_match =
                         !search_query.is_empty() && search_matches.binary_search(&index).is_ok();
 
@@ -164,38 +162,50 @@ impl RenderOnce for ReaderView {
                         .px(px(40.))
                         .py(px(10.))
                         .cursor_pointer()
-                        .on_click(move |_event, _window, cx| {
-                            row_app.update(cx, |app, cx| {
-                                app.verse_index = index;
-                                cx.notify();
+                        .border_1()
+                        .border_color(transparent_black())
+                        // Press selects; drag across verses selects a range;
+                        // Shift extends and Ctrl picks verses one by one.
+                        .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
+                            press_app.update(cx, |app, cx| {
+                                app.press_verse(index, event.modifiers, cx);
                             });
                         })
-                        // Right-click acts on the verse under the pointer; the
-                        // root view then opens the wheel around it.
+                        .on_mouse_move(move |event, _window, cx| {
+                            if event.pressed_button == Some(MouseButton::Left) {
+                                drag_app.update(cx, |app, cx| app.drag_over_verse(index, cx));
+                            }
+                        })
+                        // Right-click acts on the verse under the pointer (or the
+                        // selection it belongs to); the root then opens the wheel.
                         .on_mouse_down(MouseButton::Right, move |_event, _window, cx| {
-                            menu_app.update(cx, |app, _| app.verse_index = index);
+                            menu_app.update(cx, |app, _| app.menu_verse(index));
                         });
 
+                    // The cursor verse gets a short accent bar in the gutter
+                    // instead of a box; a multi-verse selection is a soft tint.
+                    row = row.relative().rounded(px(12.));
                     if in_visual {
-                        let fill = if is_selected {
-                            cx.theme().accent.opacity(0.20)
-                        } else {
-                            cx.theme().selection
-                        };
-                        row = row.bg(fill).rounded(px(10.));
-                    } else if is_selected {
-                        row = row.bg(cx.theme().selection).rounded(px(10.));
-                    } else if let Some(color) = highlight {
-                        let alpha = if dark { 0.18 } else { 0.30 };
-                        row = row
-                            .bg(app_theme::highlight(color, cx).opacity(alpha))
-                            .rounded(px(10.));
+                        row = row.bg(cx.theme().accent.opacity(if dark { 0.10 } else { 0.08 }));
                     } else {
-                        row = row.hover(|style| style.bg(cx.theme().muted).rounded(px(10.)));
+                        let hover = cx.theme().muted.opacity(0.45);
+                        row = row.hover(move |style| style.bg(hover));
+                    }
+                    if is_selected {
+                        row = row.child(
+                            div()
+                                .absolute()
+                                .left(px(18.))
+                                .top(px(16.))
+                                .bottom(px(16.))
+                                .w(px(3.))
+                                .rounded_full()
+                                .bg(cx.theme().accent),
+                        );
                     }
 
                     if show_numbers {
-                        let number_color = if is_match {
+                        let number_color = if is_match || is_selected {
                             cx.theme().accent
                         } else {
                             cx.theme().muted_foreground
@@ -224,15 +234,31 @@ impl RenderOnce for ReaderView {
                             line_height: Some(px(font_size * 1.62).into()),
                             ..Default::default()
                         };
-                        SelectableText::new(
+                        let text = SelectableText::new(
                             SharedString::from(format!(
                                 "reader-verse-text-{chapter_number}-{index}"
                             )),
-                            verse,
+                            verse.clone(),
                         )
                         .document_order(index as u64)
-                        .text_style(style)
-                        .into_any_element()
+                        .text_style(style);
+                        match highlight {
+                            // A marker stroke under each line of words, not
+                            // a box behind the verse.
+                            Some(color) => div()
+                                .relative()
+                                .text_size(px(font_size))
+                                .line_height(px(font_size * 1.62))
+                                .child(marker(
+                                    verse.into(),
+                                    app_theme::highlight(color, cx),
+                                    if dark { 0.30 } else { 0.34 },
+                                    verse_number.wrapping_mul(2_654_435_761) ^ chapter_number,
+                                ))
+                                .child(text)
+                                .into_any_element(),
+                            None => text.into_any_element(),
+                        }
                     };
 
                     row = row.child(div().flex_1().min_w_0().child(verse_text));
@@ -266,15 +292,15 @@ impl RenderOnce for ReaderView {
                                         app.open_note_detail(note_target.clone(), cx);
                                     });
                                 })
-                                .child(Icon::new(IconName::StickyNote).size(px(14.))),
-                        );
-                    }
-
-                    if let Some(color) = highlight {
-                        row = row.child(
-                            Icon::new(IconName::Highlighter)
-                                .size(px(14.))
-                                .text_color(app_theme::highlight(color, cx)),
+                                .flex()
+                                .items_center()
+                                .gap(px(2.))
+                                .child(Icon::new(IconName::StickyNote).size(px(14.)))
+                                .when(note_count > 1, |icon| {
+                                    icon.child(
+                                        div().text_size(px(10.)).child(note_count.to_string()),
+                                    )
+                                }),
                         );
                     }
 
@@ -290,4 +316,91 @@ impl RenderOnce for ReaderView {
             .child(content)
             .into_any_element()
     }
+}
+
+/// The book selector: a real button naming the book and chapter, with
+/// round previous/next buttons either side. The middle button opens the
+/// book and chapter navigator.
+fn chapter_heading(app: &Entity<OmaBibleApp>, reference: String, cx: &App) -> impl IntoElement {
+    let muted = cx.theme().muted_foreground;
+    let surface = cx.theme().popover;
+    let border = cx.theme().border;
+    let hover_bg = cx.theme().muted;
+    let hover_fg = cx.theme().foreground;
+    let arrow = |id: &'static str, icon: IconName, app: Entity<OmaBibleApp>, forward: bool| {
+        div()
+            .id(id)
+            .size(px(34.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_full()
+            .cursor_pointer()
+            .bg(surface)
+            .border_1()
+            .border_color(border)
+            .text_color(muted)
+            .hover(move |style| style.bg(hover_bg).text_color(hover_fg))
+            .on_click(move |_, _, cx| {
+                app.update(cx, |app, cx| {
+                    if forward {
+                        app.next_chapter(cx);
+                    } else {
+                        app.prev_chapter(cx);
+                    }
+                });
+            })
+            .child(Icon::new(icon).size(px(14.)))
+    };
+    let open_app = app.clone();
+    h_flex()
+        .items_center()
+        .gap(px(8.))
+        .child(arrow(
+            "chapter-prev",
+            IconName::ChevronLeft,
+            app.clone(),
+            false,
+        ))
+        .child(
+            h_flex()
+                .id("chapter-title")
+                .h(px(34.))
+                .items_center()
+                .gap(px(8.))
+                .pl(px(14.))
+                .pr(px(12.))
+                .rounded_full()
+                .cursor_pointer()
+                .bg(surface)
+                .border_1()
+                .border_color(border)
+                .shadow_sm()
+                .text_size(px(13.))
+                .text_color(cx.theme().foreground)
+                .hover(move |style| style.bg(hover_bg))
+                .on_click(move |_, _, cx| {
+                    open_app.update(cx, |app, cx| app.open_navigator(cx));
+                })
+                .child(
+                    Icon::new(IconName::BookOpen)
+                        .size(px(14.))
+                        .text_color(muted),
+                )
+                .child(reference)
+                .child(
+                    div()
+                        .pl(px(6.))
+                        .border_l_1()
+                        .border_color(border)
+                        .text_color(muted)
+                        .child(Icon::new(IconName::ChevronDown).size(px(12.))),
+                ),
+        )
+        .child(arrow(
+            "chapter-next",
+            IconName::ChevronRight,
+            app.clone(),
+            true,
+        ))
 }
