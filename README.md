@@ -54,6 +54,20 @@ cd oma-bible-0.1.1-x86_64-linux
 no `sudo` needed. The King James Version and its study data are built into each
 app, so it works offline straight away.
 
+**Arch / Omarchy, built from source:** each app has its own PKGBUILD, so you
+can build and install either one (or both) as a proper Arch package:
+
+```bash
+git clone https://github.com/Eyasuk/oma-bible.git
+cd oma-bible/packaging/arch/oma-bible      # desktop app
+makepkg -si
+cd ../oma-bible-tui                         # terminal app
+makepkg -si
+```
+
+This needs Rust 1.92 or newer (`sudo pacman -S rust`). Remove an app again with
+`sudo pacman -R oma-bible` or `sudo pacman -R oma-bible-tui`.
+
 ## Run from source
 
 Desktop (binary `oma-bible`):

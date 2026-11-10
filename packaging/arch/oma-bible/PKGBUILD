@@ -1,0 +1,51 @@
+# Maintainer: Eyasu kibru <eyasukibru290@gmail.com>
+#
+# Builds the Oma Bible desktop app from this clone of the repository and
+# installs it as an Arch package:
+#
+#   git clone https://github.com/Eyasuk/oma-bible.git
+#   cd oma-bible/packaging/arch/oma-bible
+#   makepkg -si
+#
+# The oma-bible-tui next door is built the same way, separately. Remove the
+# package again with: sudo pacman -R oma-bible
+
+pkgname=oma-bible
+pkgver=0.1.1
+pkgrel=1
+pkgdesc="Your own quiet place to read Scripture: a native Bible reader for Linux (desktop app)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/Eyasuk/oma-bible"
+license=('MIT')
+depends=('glibc' 'gcc-libs' 'libxkbcommon' 'libxkbcommon-x11' 'libxcb')
+makedepends=('cargo' 'pkgconf' 'libxkbcommon' 'wayland')
+provides=('oma-bible')
+conflicts=('oma-bible-bin')
+options=('!lto' '!debug')
+
+# The repository root: this file lives in packaging/arch/oma-bible.
+_root="$(realpath "$startdir/../../..")"
+
+pkgver() {
+  sed -n 's/^version = "\(.*\)"/\1/p' "$_root/Cargo.toml" | head -n1
+}
+
+prepare() {
+  cd "$_root"
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$_root"
+  # Reuse the clone's target directory, so building again (or building the
+  # other app) does not start from scratch.
+  export CARGO_TARGET_DIR="$_root/target"
+  cargo build --frozen --release -p oma-bible-gpui
+}
+
+package() {
+  cd "$_root"
+  install -Dm755 target/release/oma-bible          "$pkgdir/usr/bin/oma-bible"
+  install -Dm644 packaging/oma-bible.desktop       "$pkgdir/usr/share/applications/oma-bible.desktop"
+  install -Dm644 LICENSE                       "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
