@@ -6,6 +6,7 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+repository = "https://github.com/Eyasuk/oma-bible"
 
 [workspace.dependencies]
 oma-bible-core = { path = "crates/core" }
