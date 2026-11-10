@@ -1,0 +1,48 @@
+# Maintainer: Eyasu kibru <your-email-here>
+#
+# AUR package for the prebuilt GitHub release, split into the desktop app
+# (oma-bible-bin) and the terminal app (oma-bible-tui-bin). It lives in the
+# AUR repository ssh://aur@aur.archlinux.org/oma-bible-bin.git.
+#
+# For a new version, after the GitHub release is published:
+#   cp packaging/aur/PKGBUILD <your aur checkout>/
+#   cd <your aur checkout>
+#   # set pkgver below, pkgrel=1
+#   updpkgsums && makepkg -si
+#   makepkg --printsrcinfo > .SRCINFO
+#   git commit -am "Update to <version>" && git push
+
+pkgbase=oma-bible-bin
+pkgname=('oma-bible-bin' 'oma-bible-tui-bin')
+pkgver=0.1.1
+pkgrel=1
+arch=('x86_64')
+url="https://github.com/Eyasuk/oma-bible"
+license=('MIT')
+options=('!strip' '!debug')
+source=("$url/releases/download/v$pkgver/oma-bible-$pkgver-x86_64-linux.tar.gz"
+        "$url/releases/download/v$pkgver/oma-bible-tui-$pkgver-x86_64-linux.tar.gz")
+sha256sums=('SKIP'
+            'SKIP')
+
+package_oma-bible-bin() {
+  pkgdesc="Your own quiet place to read Scripture: a native Bible reader for Linux (desktop app)"
+  depends=('glibc' 'libxkbcommon' 'libxkbcommon-x11' 'libxcb')
+  provides=('oma-bible')
+  conflicts=('oma-bible')
+  cd "oma-bible-$pkgver-x86_64-linux"
+  install -Dm755 oma-bible         "$pkgdir/usr/bin/oma-bible"
+  install -Dm644 oma-bible.desktop "$pkgdir/usr/share/applications/oma-bible.desktop"
+  install -Dm644 LICENSE           "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+
+package_oma-bible-tui-bin() {
+  pkgdesc="Your own quiet place to read Scripture: a native Bible reader for Linux (terminal app)"
+  depends=('glibc')
+  provides=('oma-bible-tui')
+  conflicts=('oma-bible-tui')
+  cd "oma-bible-tui-$pkgver-x86_64-linux"
+  install -Dm755 oma-bible-tui         "$pkgdir/usr/bin/oma-bible-tui"
+  install -Dm644 oma-bible-tui.desktop "$pkgdir/usr/share/applications/oma-bible-tui.desktop"
+  install -Dm644 LICENSE               "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

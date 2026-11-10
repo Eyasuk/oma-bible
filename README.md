@@ -28,24 +28,31 @@ loaders, download client, settings, bookmarks, and theme catalog.
 
 ## Install
 
-Download `oma-bible-<version>-x86_64-linux.tar.gz` from the
-[Releases](../../releases) page, then:
+**Arch / Omarchy (AUR):**
 
 ```bash
-tar -xzf oma-bible-0.1.0-x86_64-linux.tar.gz
-cd oma-bible-0.1.0-x86_64-linux
+yay -S oma-bible-bin       # desktop app
+yay -S oma-bible-tui-bin   # terminal app
+```
+
+**Any Linux:** the [Releases](../../releases) page has one download per app.
+Take one or both; they work on their own and share your library, bookmarks and
+settings when both are installed.
+
+| Download | Program | What it is |
+|---|---|---|
+| `oma-bible-<version>-x86_64-linux.tar.gz` | `oma-bible` | The desktop app (GPUI) |
+| `oma-bible-tui-<version>-x86_64-linux.tar.gz` | `oma-bible-tui` | The terminal app |
+
+```bash
+tar -xzf oma-bible-0.1.1-x86_64-linux.tar.gz
+cd oma-bible-0.1.1-x86_64-linux
 ./install.sh
 ```
 
-That puts two programs in `~/.local/bin` and adds both to the app launcher:
-
-| Program | What it is |
-|---|---|
-| `oma-bible` | The desktop app (GPUI) |
-| `oma-bible-tui` | The terminal app |
-
-The King James Version and its study data are built in, so both work
-offline straight away.
+`install.sh` puts the program in `~/.local/bin` and adds it to the app launcher;
+no `sudo` needed. The King James Version and its study data are built into each
+app, so it works offline straight away.
 
 ## Run from source
 
@@ -356,9 +363,12 @@ Releases are built by `.github/workflows/release.yml`:
 1. Set the version in `Cargo.toml` (`[workspace.package] version`) and commit.
 2. Tag and push: `git tag -a v0.2.0 -m "Oma Bible 0.2.0" && git push origin main v0.2.0`.
 3. GitHub Actions runs the tests, builds both apps on Ubuntu 22.04 and attaches
-   `oma-bible-<version>-x86_64-linux.tar.gz` (plus a `.sha256`) to a **draft**
-   release with generated notes.
+   one download per app (`oma-bible-…` and `oma-bible-tui-…`, each with a
+   `.sha256`) to a **draft** release with generated notes. The packing is
+   `packaging/package.sh`, which also runs locally after `cargo build --release`.
 4. Edit the notes on GitHub and press **Publish release**.
+5. Update the AUR package from `packaging/aur/PKGBUILD` (see the comments at
+   its top).
 
 ## Checks
 

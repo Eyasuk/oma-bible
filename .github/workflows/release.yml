@@ -1,6 +1,7 @@
 # Builds both apps and attaches them to a draft GitHub release whenever a
-# version tag (v0.1.0, v0.2.0, ...) is pushed. Review the draft's notes on
-# GitHub, then press Publish.
+# version tag (v0.1.1, v0.2.0, ...) is pushed: one download for the desktop
+# app and one for the terminal app, each with a checksum. Review the draft's
+# notes on GitHub, then press Publish.
 name: Release
 
 on:
@@ -16,7 +17,7 @@ jobs:
     # low enough for most distributions, not just Arch.
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install build libraries
         run: |
@@ -37,21 +38,10 @@ jobs:
         run: cargo build --release -p oma-bible-gpui -p oma-bible-tui
 
       - name: Package
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          name="oma-bible-${version}-x86_64-linux"
-          mkdir "$name"
-          cp target/release/oma-bible target/release/oma-bible-tui "$name/"
-          cp packaging/oma-bible.desktop packaging/oma-bible-tui.desktop \
-             packaging/install.sh README.md LICENSE "$name/"
-          tar -czf "$name.tar.gz" "$name"
-          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
-          echo "ASSET=$name" >> "$GITHUB_ENV"
+        run: packaging/package.sh "${GITHUB_REF_NAME#v}" dist
 
       - uses: softprops/action-gh-release@v2
         with:
           draft: true
           generate_release_notes: true
-          files: |
-            ${{ env.ASSET }}.tar.gz
-            ${{ env.ASSET }}.tar.gz.sha256
+          files: dist/*
