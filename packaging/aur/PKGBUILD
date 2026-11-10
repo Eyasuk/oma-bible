@@ -22,8 +22,8 @@ license=('MIT')
 options=('!strip' '!debug')
 source=("$url/releases/download/v$pkgver/oma-bible-$pkgver-x86_64-linux.tar.gz"
         "$url/releases/download/v$pkgver/oma-bible-tui-$pkgver-x86_64-linux.tar.gz")
-sha256sums=('SKIP'
-            'SKIP')
+sha256sums=('5c90e79a9a3ab81cb4207e3eba7199fd4ba38ca8996ae408f57317d4a26e620b'
+            'c0be7c232b1d1bdea8c4c01e28ed8abdcf64f210119d5bd853a65a78728495cf')
 
 package_oma-bible-bin() {
   pkgdesc="Your own quiet place to read Scripture: a native Bible reader for Linux (desktop app)"
