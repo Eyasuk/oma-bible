@@ -49,6 +49,7 @@ impl RenderOnce for ReaderView {
         let search_matches = state.search_matches.clone();
         let highlights = &state.highlights;
         let dark = state.themes.active().mode.is_dark();
+        let joined_verses = translation.is_some_and(|translation| translation.joined_verses);
         let scroll = &state.reading_scroll;
 
         let reference = if book_name.is_empty() {
@@ -132,6 +133,25 @@ impl RenderOnce for ReaderView {
                     let menu_app = app.clone();
                     let verse = verses[index].clone();
                     let verse_number = index as u32 + 1;
+                    let headings: Vec<String> = chapter
+                        .map(|chapter| {
+                            chapter
+                                .headings_before(verse_number)
+                                .map(str::to_string)
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    // Joined verses ("2-3" in print) leave the first ones
+                    // empty; label the verse that holds the text as a range.
+                    let mut first = index;
+                    while joined_verses && first > 0 && verses[first - 1].trim().is_empty() {
+                        first -= 1;
+                    }
+                    let number_label = if first < index {
+                        format!("{}–{}", first + 1, index + 1)
+                    } else {
+                        verse_number.to_string()
+                    };
                     let bookmark = state.bookmarks.find(
                         &translation_abbr,
                         &book_name,
@@ -216,7 +236,7 @@ impl RenderOnce for ReaderView {
                                 .text_color(number_color)
                                 .min_w(px(22.))
                                 .pt(px(8.))
-                                .child(verse_number.to_string()),
+                                .child(number_label),
                         );
                     }
 
@@ -304,7 +324,28 @@ impl RenderOnce for ReaderView {
                         );
                     }
 
-                    row
+                    if headings.is_empty() {
+                        row.into_any_element()
+                    } else {
+                        v_flex()
+                            .w_full()
+                            .items_center()
+                            .children(headings.into_iter().map(|heading| {
+                                div()
+                                    .w_full()
+                                    .max_w(px(760.))
+                                    .px(px(40.))
+                                    .pl(px(if show_numbers { 76. } else { 40. }))
+                                    .pt(px(22.))
+                                    .pb(px(2.))
+                                    .text_size(px((font_size * 0.82).max(13.)))
+                                    .line_height(px((font_size * 0.82).max(13.) * 1.5))
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(heading)
+                            }))
+                            .child(row)
+                            .into_any_element()
+                    }
                 }));
         }
 

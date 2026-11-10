@@ -32,6 +32,8 @@ pub struct Settings {
     pub download_language: Option<String>,
     /// Edge of the window the shortcut dock is attached to.
     pub dock: DockPosition,
+    /// Commentary shown in the study sheet, by API id.
+    pub commentary: Option<String>,
 }
 
 /// Where the desktop shortcut dock floats. The reader still owns the keyboard
@@ -91,6 +93,7 @@ impl Default for Settings {
             font_size: 17,
             download_language: None,
             dock: DockPosition::default(),
+            commentary: None,
         }
     }
 }

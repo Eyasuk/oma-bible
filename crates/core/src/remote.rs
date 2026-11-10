@@ -1,4 +1,6 @@
-//! Client for the [Free Use Bible API](https://bible.helloao.org).
+//! Client for the [Free Use Bible API](https://bible.helloao.org), plus a
+//! complete Amharic Bible from a second source, since the API's only Amharic
+//! text is a New Testament with gaps.
 //!
 //! The API is plain JSON over HTTPS. Downloads are streamed in chunks so a
 //! cancelled download stops as soon as the current chunk arrives, rather than
@@ -18,12 +20,20 @@ use std::{
 
 use serde::Deserialize;
 
-use crate::bible::{BibleBook, Chapter, Translation};
+use crate::bible::{BibleBook, Chapter, Footnote, Heading, Translation, canon};
 
 pub const API_BASE: &str = "https://bible.helloao.org";
 
+/// Catalogue id of the complete Amharic Bible (Old and New Testament).
+pub const AMHARIC_FULL_ID: &str = "amh_full";
+
+/// The complete Amharic Bible as one JSON file, converted from
+/// wordproject.org by the `magna25/amharic-bible-json` project (MIT licence).
+pub const AMHARIC_FULL_URL: &str =
+    "https://raw.githubusercontent.com/magna25/amharic-bible-json/main/amharic_bible.json";
+
 /// A translation listed by the API, before it has been downloaded.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 pub struct RemoteTranslation {
     pub id: String,
     #[serde(default)]
@@ -116,7 +126,9 @@ impl RemoteCatalog {
         let response = client()?.get(&url).send()?;
         let response = check_status(response, &url)?;
         let available: AvailableTranslations = response.json()?;
-        Ok(Self::new(available.translations))
+        let mut translations = available.translations;
+        translations.extend(extra_translations());
+        Ok(Self::new(translations))
     }
 
     /// Builds a catalogue from the JSON body, useful for tests and caches.
@@ -249,14 +261,52 @@ impl DownloadControl {
     }
 }
 
-/// Downloads a complete translation in the simplified chapter format.
+/// Downloads a complete translation: from the Bible API in the simplified
+/// chapter format, or the complete Amharic Bible from its own source.
 pub fn download_translation(
     id: &str,
     control: &DownloadControl,
 ) -> Result<Translation, RemoteError> {
+    if id.eq_ignore_ascii_case(AMHARIC_FULL_ID) {
+        let contents = fetch_bytes(AMHARIC_FULL_URL, control)?;
+        return parse_amharic_full(&contents);
+    }
     let url = format!("{API_BASE}/api/{id}/complete.simple.json");
-    let mut response = client()?.get(&url).send()?;
-    response = check_status(response, &url)?;
+    let contents = fetch_bytes(&url, control)?;
+    parse_complete(&contents)
+}
+
+/// Where a catalogue entry is downloaded from, for status messages.
+pub fn source_name(id: &str) -> &'static str {
+    if id.eq_ignore_ascii_case(AMHARIC_FULL_ID) {
+        "github.com/magna25/amharic-bible-json"
+    } else {
+        "bible.helloao.org"
+    }
+}
+
+/// Translations that do not come from the Bible API's catalogue.
+fn extra_translations() -> Vec<RemoteTranslation> {
+    vec![RemoteTranslation {
+        id: AMHARIC_FULL_ID.to_string(),
+        name: "መጽሐፍ ቅዱስ (ሙሉ)".to_string(),
+        english_name: "Amharic Bible (complete Old and New Testament)".to_string(),
+        language: "amh".to_string(),
+        language_name: "አማርኛ".to_string(),
+        language_english_name: "Amharic".to_string(),
+        number_of_books: 66,
+        total_number_of_chapters: 1189,
+        total_number_of_verses: 31102,
+        text_direction: "ltr".to_string(),
+        website: "https://github.com/magna25/amharic-bible-json".to_string(),
+        ..RemoteTranslation::default()
+    }]
+}
+
+/// Streams a URL into memory, stopping between chunks when cancelled.
+fn fetch_bytes(url: &str, control: &DownloadControl) -> Result<Vec<u8>, RemoteError> {
+    let mut response = client()?.get(url).send()?;
+    response = check_status(response, url)?;
 
     let mut contents = Vec::new();
     let mut buffer = [0u8; 64 * 1024];
@@ -280,8 +330,86 @@ pub fn download_translation(
     if control.is_cancelled() {
         return Err(RemoteError::Cancelled);
     }
+    Ok(contents)
+}
 
-    parse_complete(&contents)
+#[derive(Debug, Deserialize)]
+struct AmharicBible {
+    books: Vec<AmharicBook>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AmharicBook {
+    title: String,
+    #[serde(default)]
+    chapters: Vec<AmharicChapter>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AmharicChapter {
+    chapter: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    verses: Vec<String>,
+}
+
+/// The Amharic file lists the 66 books in canonical order. Joined verses
+/// ("2-3" in print) keep their text on the last verse and mark the others
+/// with `-` or `[see v3]`; those become empty verses.
+fn parse_amharic_full(contents: &[u8]) -> Result<Translation, RemoteError> {
+    let bible: AmharicBible = serde_json::from_slice(contents)?;
+    let books = bible
+        .books
+        .into_iter()
+        .enumerate()
+        .map(|(index, book)| {
+            let mut chapters = book
+                .chapters
+                .into_iter()
+                .enumerate()
+                .map(|(position, chapter)| {
+                    let number = chapter
+                        .chapter
+                        .trim()
+                        .parse()
+                        .unwrap_or(position as u32 + 1);
+                    let verses = chapter
+                        .verses
+                        .into_iter()
+                        .map(|verse| {
+                            let verse = verse.trim();
+                            if verse == "-" || verse.starts_with("[see") {
+                                String::new()
+                            } else {
+                                verse.to_string()
+                            }
+                        })
+                        .collect();
+                    let mut chapter_out = Chapter::new(number, verses);
+                    let title = chapter.title.trim();
+                    if !title.is_empty() && !title.starts_with("[see") {
+                        chapter_out.headings.push(Heading {
+                            verse: 1,
+                            text: title.to_string(),
+                        });
+                    }
+                    chapter_out
+                })
+                .collect::<Vec<_>>();
+            chapters.sort_by_key(|chapter| chapter.number);
+            let book_out = BibleBook::new(book.title.trim(), chapters);
+            match canon::BOOKS.get(index) {
+                Some((id, _)) => book_out.with_id(*id),
+                None => book_out,
+            }
+        })
+        .filter(|book| !book.chapters.is_empty())
+        .collect();
+
+    let mut translation = Translation::new("መጽሐፍ ቅዱስ (ሙሉ)", "Amharic", AMHARIC_FULL_ID, books);
+    translation.joined_verses = true;
+    Ok(translation)
 }
 
 /// Saves a downloaded translation under the user data directory.
@@ -353,6 +481,17 @@ struct SimpleContent {
     number: Option<u32>,
     #[serde(default)]
     text: Option<String>,
+    #[serde(default)]
+    footnotes: Vec<SimpleNote>,
+    #[serde(default)]
+    headings: Vec<SimpleNote>,
+}
+
+/// A verse footnote or inline heading; only the text is kept.
+#[derive(Debug, Deserialize)]
+struct SimpleNote {
+    #[serde(default)]
+    text: String,
 }
 
 fn parse_complete(contents: &[u8]) -> Result<Translation, RemoteError> {
@@ -398,6 +537,7 @@ fn parse_complete(contents: &[u8]) -> Result<Translation, RemoteError> {
 
 impl RemoteBook {
     fn into_local(self) -> (BibleBook, u32) {
+        let id = self.id.trim().to_string();
         let name = [self.name, self.common_name, self.title, self.id]
             .into_iter()
             .find(|value| !value.trim().is_empty())
@@ -410,21 +550,63 @@ impl RemoteBook {
             .collect::<Vec<_>>();
         chapters.sort_by_key(|chapter| chapter.number);
 
-        (BibleBook::new(name.trim(), chapters), self.order)
+        (
+            BibleBook::new(name.trim(), chapters).with_id(id),
+            self.order,
+        )
     }
 }
 
 fn simple_chapter(chapter: SimpleChapter) -> Chapter {
-    let mut numbered = chapter
-        .content
-        .into_iter()
-        .filter(|content| content.kind == "verse")
-        .filter_map(|content| {
-            let number = content.number?;
-            let text = content.text?.trim().to_string();
-            (number >= 1).then_some((number, text))
-        })
-        .collect::<Vec<_>>();
+    let mut numbered = Vec::new();
+    let mut headings = Vec::new();
+    let mut footnotes = Vec::new();
+    // Chapter-level headings belong to the verse that follows them.
+    let mut pending_headings = Vec::new();
+
+    for content in chapter.content {
+        match content.kind.as_str() {
+            "heading" => {
+                if let Some(text) = content.text.map(|text| text.trim().to_string())
+                    && !text.is_empty()
+                {
+                    pending_headings.push(text);
+                }
+            }
+            "verse" => {
+                let Some(number) = content.number.filter(|number| *number >= 1) else {
+                    continue;
+                };
+                for text in pending_headings.drain(..) {
+                    headings.push(Heading {
+                        verse: number,
+                        text,
+                    });
+                }
+                for heading in content.headings {
+                    let text = heading.text.trim();
+                    if !text.is_empty() {
+                        headings.push(Heading {
+                            verse: number,
+                            text: text.to_string(),
+                        });
+                    }
+                }
+                for note in content.footnotes {
+                    let text = note.text.trim();
+                    if !text.is_empty() {
+                        footnotes.push(Footnote {
+                            verse: number,
+                            text: text.to_string(),
+                        });
+                    }
+                }
+                let text = content.text.unwrap_or_default().trim().to_string();
+                numbered.push((number, text));
+            }
+            _ => {}
+        }
+    }
 
     let highest = numbered
         .iter()
@@ -433,15 +615,35 @@ fn simple_chapter(chapter: SimpleChapter) -> Chapter {
         .unwrap_or_default();
     let mut verses = vec![String::new(); highest as usize];
 
-    for (number, text) in numbered.drain(..) {
-        verses[number as usize - 1] = text;
+    for (number, text) in numbered {
+        let slot = &mut verses[number as usize - 1];
+        // A verse split across paragraphs arrives in pieces; keep them all.
+        if slot.is_empty() {
+            *slot = text;
+        } else if !text.is_empty() {
+            slot.push(' ');
+            slot.push_str(&text);
+        }
     }
 
     while verses.last().is_some_and(String::is_empty) {
         verses.pop();
     }
 
-    Chapter::new(chapter.number, verses)
+    let mut out = Chapter::new(chapter.number, verses);
+    out.headings = headings;
+    out.footnotes = footnotes;
+    out
+}
+
+/// GET a small JSON file. `None` when the API answers 404.
+pub(crate) fn http_get(url: &str) -> Result<Option<Vec<u8>>, RemoteError> {
+    let response = client()?.get(url).send()?;
+    if response.status().as_u16() == 404 {
+        return Ok(None);
+    }
+    let response = check_status(response, url)?;
+    Ok(Some(response.bytes()?.to_vec()))
 }
 
 fn client() -> Result<reqwest::blocking::Client, RemoteError> {
@@ -582,7 +784,9 @@ mod tests {
                     "content": [
                       { "type": "heading", "text": "The Beginning" },
                       { "type": "verse", "number": 1, "text": " One " },
-                      { "type": "verse", "number": 3, "text": "Three" }
+                      { "type": "verse", "number": 3, "text": "Three",
+                        "footnotes": [{ "noteId": 1, "text": "Or third", "caller": "+" }] },
+                      { "type": "verse", "number": 3, "text": "again" }
                     ]
                   }
                 }
@@ -634,7 +838,33 @@ mod tests {
         let chapter = genesis.chapter(1).unwrap();
         assert_eq!(chapter.verse(1), Some("One"));
         assert_eq!(chapter.verse(2), Some(""));
-        assert_eq!(chapter.verse(3), Some("Three"));
+        assert_eq!(chapter.verse(3), Some("Three again"));
+        assert_eq!(genesis.id, "GEN");
+        assert_eq!(
+            chapter.headings_before(1).collect::<Vec<_>>(),
+            ["The Beginning"]
+        );
+        assert_eq!(chapter.footnotes_for(3).collect::<Vec<_>>(), ["Or third"]);
+    }
+
+    #[test]
+    fn converts_the_complete_amharic_file() {
+        let json = r#"{"title":"Amharic Bible","books":[
+            {"title":"ኦሪት ዘፍጥረት","abbv":"","chapters":[
+                {"chapter":"1","title":"","verses":["በመጀመሪያ","-","ሁለት ሦስት"]}]},
+            {"title":"ኦሪት ዘጸአት","abbv":"","chapters":[
+                {"chapter":"1","title":"መዝሙር","verses":["አንድ"]}]}]}"#;
+        let translation = parse_amharic_full(json.as_bytes()).unwrap();
+
+        assert!(translation.joined_verses);
+        assert_eq!(translation.abbreviation, AMHARIC_FULL_ID);
+        assert_eq!(translation.books[0].id, "GEN");
+        assert_eq!(translation.books[1].id, "EXO");
+        let chapter = translation.books[0].chapter(1).unwrap();
+        assert_eq!(chapter.verse(2), Some(""));
+        assert_eq!(chapter.verse(3), Some("ሁለት ሦስት"));
+        let exodus = translation.books[1].chapter(1).unwrap();
+        assert_eq!(exodus.headings_before(1).collect::<Vec<_>>(), ["መዝሙር"]);
     }
 
     #[test]

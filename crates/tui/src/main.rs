@@ -8,9 +8,10 @@ use std::{
 use crossterm::event::{self, Event, KeyEventKind};
 use oma_bible_core::{
     bible::Library,
-    data_dir, fonts,
+    fonts,
     storage::{Bookmarks, Settings},
     theme::ThemeCatalog,
+    user_data_dir,
 };
 use ratatui::DefaultTerminal;
 
@@ -41,8 +42,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     if app.library.translations().is_empty() {
         app.open_download(Screen::Reader);
         app.message = Some(format!(
-            "No translations installed. Add one from the Bible API (data: {}).",
-            data_dir().display()
+            "No translations installed. Add one from the Bible API (saved to {}).",
+            user_data_dir().display()
         ));
     } else if !app.themes.is_on_omarchy()
         && app.themes.themes().len() > 1

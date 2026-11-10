@@ -6,11 +6,52 @@ pub struct Chapter {
     pub number: u32,
     /// Verses in reading order. The first item is verse 1.
     pub verses: Vec<String>,
+    /// Section headings, each shown before the verse it names.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub headings: Vec<Heading>,
+    /// Translator footnotes, attached to verses.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub footnotes: Vec<Footnote>,
+}
+
+/// A section heading placed before `verse` (1-based).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Heading {
+    pub verse: u32,
+    pub text: String,
+}
+
+/// A footnote on `verse` (1-based).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Footnote {
+    pub verse: u32,
+    pub text: String,
 }
 
 impl Chapter {
     pub fn new(number: u32, verses: Vec<String>) -> Self {
-        Self { number, verses }
+        Self {
+            number,
+            verses,
+            headings: Vec::new(),
+            footnotes: Vec::new(),
+        }
+    }
+
+    /// Headings shown before a verse (1-based).
+    pub fn headings_before(&self, verse: u32) -> impl Iterator<Item = &str> {
+        self.headings
+            .iter()
+            .filter(move |heading| heading.verse == verse)
+            .map(|heading| heading.text.as_str())
+    }
+
+    /// Footnotes on a verse (1-based).
+    pub fn footnotes_for(&self, verse: u32) -> impl Iterator<Item = &str> {
+        self.footnotes
+            .iter()
+            .filter(move |note| note.verse == verse)
+            .map(|note| note.text.as_str())
     }
 
     /// Returns the verse with the given 1-based number.

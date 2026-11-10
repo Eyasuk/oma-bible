@@ -6,6 +6,10 @@ use super::Chapter;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BibleBook {
     pub name: String,
+    /// USFM book code such as `GEN` or `JHN`, used to look up cross-references
+    /// and commentaries. Older downloads may not have it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
     pub chapters: Vec<Chapter>,
 }
 
@@ -13,8 +17,15 @@ impl BibleBook {
     pub fn new(name: impl Into<String>, chapters: Vec<Chapter>) -> Self {
         Self {
             name: name.into(),
+            id: String::new(),
             chapters,
         }
+    }
+
+    /// Sets the USFM book code.
+    pub fn with_id(mut self, id: impl Into<String>) -> Self {
+        self.id = id.into().to_uppercase();
+        self
     }
 
     /// Returns the chapter with the given number.

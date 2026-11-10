@@ -3,6 +3,7 @@
 mod actions;
 mod app;
 mod chrome;
+mod explore;
 mod marker;
 mod reader;
 mod theme;

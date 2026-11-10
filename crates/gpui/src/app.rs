@@ -18,6 +18,7 @@ use oma_bible_core::{
 
 use crate::actions::*;
 use crate::chrome;
+use crate::explore::{self, Explore, ExploreTab};
 use crate::reader::ReaderView;
 use crate::theme as app_theme;
 use crate::tools::Tool;
@@ -121,6 +122,7 @@ pub enum Overlay {
     Highlight,
     NoteDetail,
     NoteEditor,
+    Explore,
     Wheel,
 }
 
@@ -204,12 +206,17 @@ pub struct OmaBibleApp {
     pub study_selected: usize,
     pub settings_selected: usize,
     pub highlight_selected: usize,
+    /// The commentary dropdown in settings is open.
+    pub commentary_open: bool,
+    pub commentary_pick: usize,
 
     pub input: Option<InputPrompt>,
     pub note_detail: Option<NoteTarget>,
     /// Card picked in the verse's note list.
     pub note_selected: usize,
     pub note_editor: Option<NoteEditor>,
+    /// Cross-references, commentary and footnotes for one verse.
+    pub explore: Explore,
     /// Give keyboard focus back to the reader on the next render.
     refocus: bool,
 
@@ -313,10 +320,13 @@ impl OmaBibleApp {
             study_selected: 0,
             settings_selected: 0,
             highlight_selected: 0,
+            commentary_open: false,
+            commentary_pick: 0,
             input: None,
             note_detail: None,
             note_selected: 0,
             note_editor: None,
+            explore: Explore::default(),
             refocus: false,
             overlay: Overlay::None,
             wheel_center: None,
@@ -1021,6 +1031,7 @@ impl OmaBibleApp {
     }
 
     pub fn close_overlay(&mut self, cx: &mut Context<Self>) {
+        self.commentary_open = false;
         if self.note_editor.take().is_some() {
             self.refocus = true;
         }
@@ -1138,7 +1149,8 @@ impl OmaBibleApp {
                 self.adjust_font_size(2, cx);
             }
             6 => self.cycle_dock(cx),
-            7 => {
+            7 => self.toggle_commentary_dropdown(cx),
+            8 => {
                 self.overlay = Overlay::None;
                 self.open_help(cx);
             }
@@ -1184,6 +1196,25 @@ impl OmaBibleApp {
                 "enter" => self.apply_navigator(cx),
                 _ => {}
             },
+            Overlay::Settings if self.commentary_open => {
+                let count = self.commentary_options().map(<[_]>::len).unwrap_or(0);
+                match key {
+                    "escape" | "q" | "h" | "left" => {
+                        self.commentary_open = false;
+                        cx.notify();
+                    }
+                    "j" | "down" if count > 0 => {
+                        self.commentary_pick = (self.commentary_pick + 1) % count;
+                        cx.notify();
+                    }
+                    "k" | "up" if count > 0 => {
+                        self.commentary_pick = (self.commentary_pick + count - 1) % count;
+                        cx.notify();
+                    }
+                    "enter" | "space" | " " => self.pick_commentary(cx),
+                    _ => {}
+                }
+            }
             Overlay::Settings => match key {
                 "escape" | "q" | "," => self.close_overlay(cx),
                 "j" | "down" => {
@@ -1249,6 +1280,7 @@ impl OmaBibleApp {
                 }
             }
             Overlay::NoteEditor => {}
+            Overlay::Explore => self.handle_explore_key(key, shift, cx),
             Overlay::Wheel => match key {
                 "escape" | "q" | "space" => self.close_overlay(cx),
                 _ => {
@@ -1581,7 +1613,34 @@ impl OmaBibleApp {
     }
 
     fn settings_row_count(&self) -> usize {
-        8
+        9
+    }
+
+    /// Open or close the commentary list under its settings row.
+    pub fn toggle_commentary_dropdown(&mut self, cx: &mut Context<Self>) {
+        self.settings_selected = 7;
+        self.commentary_open = !self.commentary_open;
+        if self.commentary_open {
+            self.ensure_commentary_list(cx);
+            let current = self.commentary_id();
+            self.commentary_pick = self
+                .commentary_options()
+                .and_then(|list| list.iter().position(|c| c.id == current))
+                .unwrap_or(0);
+        }
+        cx.notify();
+    }
+
+    fn pick_commentary(&mut self, cx: &mut Context<Self>) {
+        let id = self
+            .commentary_options()
+            .and_then(|list| list.get(self.commentary_pick))
+            .map(|c| c.id.clone());
+        if let Some(id) = id {
+            self.choose_commentary(&id, cx);
+        }
+        self.commentary_open = false;
+        cx.notify();
     }
 
     /// Whether a tool's state is "on" for the selected verse.
@@ -1604,6 +1663,7 @@ impl OmaBibleApp {
                 .is_some(),
             Tool::Settings => self.overlay == Overlay::Settings,
             Tool::Chapters => self.overlay == Overlay::Navigator,
+            Tool::Explore => self.overlay == Overlay::Explore,
             Tool::Copy | Tool::Study => false,
         }
     }
@@ -1616,6 +1676,7 @@ impl OmaBibleApp {
             Tool::Note => self.open_note_for_current_smart(window, cx),
             Tool::Highlight => self.open_highlight(cx),
             Tool::Copy => self.copy_current_verse(cx),
+            Tool::Explore => self.open_explore(ExploreTab::References, cx),
             Tool::Study => self.open_study(cx),
             Tool::Settings => self.open_settings_sheet(cx),
             Tool::Chapters => self.open_navigator(cx),
@@ -2122,6 +2183,31 @@ impl OmaBibleApp {
             cx,
         );
     }
+    /// Go to a verse of the open translation. Returns `false` when the
+    /// chapter does not exist.
+    pub fn jump_to_place(&mut self, book_index: usize, chapter: u32, verse: u32) -> bool {
+        let Some(chapter_index) = self
+            .translation()
+            .and_then(|translation| translation.books.get(book_index))
+            .and_then(|book| book.chapters.iter().position(|c| c.number == chapter))
+        else {
+            return false;
+        };
+        self.book_index = book_index;
+        self.chapter_index = chapter_index;
+        let count = self.chapter().map(|c| c.verse_count()).unwrap_or(0);
+        self.verse_index = (verse as usize)
+            .saturating_sub(1)
+            .min(count.saturating_sub(1));
+        self.focus = FocusPane::Verses;
+        self.screen = Screen::Reader;
+        self.clear_search();
+        self.clear_visual();
+        self.save_position();
+        self.scroll_to_verse(self.verse_index);
+        true
+    }
+
     fn locate(&self, bm: &Bookmark) -> Option<(usize, usize, usize, usize)> {
         let ti = self
             .library
@@ -2237,7 +2323,11 @@ impl OmaBibleApp {
                                 self.translation_selected = i;
                             }
                             self.save_position();
-                            let mut msg = format!("Added {} from bible.helloao.org", done.name);
+                            let mut msg = format!(
+                                "Added {} from {}",
+                                done.name,
+                                remote::source_name(&done.id)
+                            );
                             if let Some(n) = done.font_notice {
                                 msg.push_str(" · ");
                                 msg.push_str(&n);
@@ -2294,6 +2384,34 @@ impl OmaBibleApp {
         let focus = state.read(cx).focus_handle(cx);
         window.focus(&focus, cx);
         self.input = Some(InputPrompt { kind, state });
+        cx.notify();
+    }
+
+    /// The language picker for the download catalogue.
+    pub fn open_languages(&mut self, cx: &mut Context<Self>) {
+        self.language_query.clear();
+        self.language_selected = 0;
+        self.screen = Screen::Languages;
+        cx.notify();
+    }
+
+    /// Clear the filter of the open list screen.
+    pub fn clear_filter(&mut self, cx: &mut Context<Self>) {
+        match self.screen {
+            Screen::Translations => {
+                self.translation_query.clear();
+                self.translation_selected = 0;
+            }
+            Screen::Downloads => {
+                self.download_query.clear();
+                self.download_selected = 0;
+            }
+            Screen::Languages => {
+                self.language_query.clear();
+                self.language_selected = 0;
+            }
+            _ => {}
+        }
         cx.notify();
     }
 
@@ -2520,10 +2638,7 @@ impl OmaBibleApp {
             "right" | "tab" => self.move_right(cx),
             "l" if !shift => {
                 if self.screen == Screen::Downloads {
-                    self.language_query.clear();
-                    self.language_selected = 0;
-                    self.screen = Screen::Languages;
-                    cx.notify();
+                    self.open_languages(cx);
                 } else {
                     self.move_right(cx);
                 }
@@ -2569,6 +2684,12 @@ impl OmaBibleApp {
             }
             "M" if self.screen == Screen::Reader => self.open_note_for_current_smart(window, cx),
             "o" if self.screen == Screen::Reader => self.open_navigator(cx),
+            "r" if self.screen == Screen::Reader && !shift => {
+                self.open_explore(ExploreTab::References, cx)
+            }
+            "c" if self.screen == Screen::Reader && !shift => {
+                self.open_explore(ExploreTab::Commentary, cx)
+            }
             "t" if shift => self.open_themes(self.screen, cx),
             "T" => self.open_themes(self.screen, cx),
             "t" => self.open_translations(self.screen, cx),
@@ -2835,6 +2956,7 @@ fn render_overlay(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> Option<An
         Overlay::Highlight => Some(render_highlight_sheet(app, cx)),
         Overlay::NoteDetail => Some(render_note_detail(app, cx)),
         Overlay::NoteEditor => Some(render_note_editor(app, cx)),
+        Overlay::Explore => Some(explore::render_explore(app, cx)),
         Overlay::Wheel => Some(chrome::render_wheel(app, cx)),
     }
 }
@@ -3212,7 +3334,7 @@ pub fn format_note_date(seconds: u64) -> String {
     format!("{day} {} {year}", MONTHS[(month - 1) as usize])
 }
 
-fn overlay_shell(
+pub(crate) fn overlay_shell(
     cx: &mut Context<OmaBibleApp>,
     max_width: f32,
     card: impl IntoElement,
@@ -3502,6 +3624,15 @@ fn render_settings_sheet(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> An
             app.settings.dock.label().into(),
             false,
         ),
+        (
+            IconName::BookText,
+            "Commentary",
+            app.commentary_options()
+                .and_then(|list| list.iter().find(|c| c.id == app.commentary_id()))
+                .map(|c| c.title().to_string())
+                .unwrap_or_else(|| app.commentary_id()),
+            false,
+        ),
         (IconName::CircleQuestionMark, "Help", String::new(), true),
     ];
 
@@ -3547,7 +3678,10 @@ fn render_settings_sheet(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> An
         )
         .child(
             v_flex()
+                .id("settings-rows")
                 .w_full()
+                .max_h(px(520.))
+                .overflow_y_scroll()
                 .p(px(8.))
                 .children(rows.into_iter().enumerate().map(
                     |(index, (icon, label, value, chevron))| {
@@ -3583,13 +3717,33 @@ fn render_settings_sheet(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> An
                                         .size(px(14.))
                                         .text_color(cx.theme().muted_foreground),
                                 )
+                            })
+                            .when(index == 7, |this| {
+                                this.child(
+                                    Icon::new(if app.commentary_open {
+                                        IconName::ChevronUp
+                                    } else {
+                                        IconName::ChevronDown
+                                    })
+                                    .size(px(14.))
+                                    .text_color(cx.theme().muted_foreground),
+                                )
                             });
-                        if selected {
+                        if selected && !(index == 7 && app.commentary_open) {
                             row = row.bg(cx.theme().selection);
                         } else {
                             row = row.hover(|style| style.bg(cx.theme().muted));
                         }
-                        row
+                        let row = row.into_any_element();
+                        if index == 7 && app.commentary_open {
+                            v_flex()
+                                .w_full()
+                                .child(row)
+                                .child(commentary_dropdown(app, cx))
+                                .into_any_element()
+                        } else {
+                            row
+                        }
                     },
                 )),
         )
@@ -3606,7 +3760,11 @@ fn render_settings_sheet(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> An
                     div()
                         .text_size(px(11.))
                         .text_color(cx.theme().muted_foreground)
-                        .child("j/k move · Enter choose · +/- text size"),
+                        .child(if app.commentary_open {
+                            "j/k move · Enter use commentary · Esc close list"
+                        } else {
+                            "j/k move · Enter choose · +/- text size"
+                        }),
                 )
                 .child(
                     div()
@@ -3617,6 +3775,86 @@ fn render_settings_sheet(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> An
         );
 
     overlay_shell(cx, 560., card)
+}
+
+/// The commentaries the API offers, as a list under the settings row.
+fn commentary_dropdown(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> AnyElement {
+    let shell = v_flex()
+        .w_full()
+        .mt(px(4.))
+        .mb(px(6.))
+        .ml(px(42.))
+        .p(px(4.))
+        .rounded(px(12.))
+        .bg(cx.theme().background)
+        .border_1()
+        .border_color(cx.theme().border);
+    let Some(list) = app.commentary_options() else {
+        return shell
+            .child(
+                div()
+                    .px(px(12.))
+                    .py(px(10.))
+                    .text_size(px(13.))
+                    .text_color(cx.theme().muted_foreground)
+                    .child(match &app.explore.commentary_list {
+                        Some(explore::Fetch::Failed(error)) => {
+                            format!("Could not load commentaries: {error}")
+                        }
+                        _ => "Loading commentaries…".to_string(),
+                    }),
+            )
+            .into_any_element();
+    };
+    let current = app.commentary_id();
+    let hover = cx.theme().muted;
+    shell
+        .children(list.iter().enumerate().map(|(index, commentary)| {
+            let id = commentary.id.clone();
+            let active = commentary.id == current;
+            let picked = index == app.commentary_pick;
+            h_flex()
+                .id(SharedString::from(format!("commentary-option-{index}")))
+                .w_full()
+                .items_center()
+                .gap(px(10.))
+                .px(px(12.))
+                .py(px(8.))
+                .rounded(px(9.))
+                .cursor_pointer()
+                .when(picked, |row| row.bg(cx.theme().selection))
+                .when(!picked, |row| row.hover(move |style| style.bg(hover)))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.choose_commentary(&id, cx);
+                    this.commentary_open = false;
+                }))
+                .child(
+                    div()
+                        .w(px(14.))
+                        .child(
+                            Icon::new(IconName::Check)
+                                .size(px(14.))
+                                .text_color(if active {
+                                    cx.theme().accent
+                                } else {
+                                    transparent_black()
+                                }),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .text_size(px(13.))
+                        .text_color(if active {
+                            cx.theme().accent
+                        } else {
+                            cx.theme().foreground
+                        })
+                        .child(commentary.title().to_string()),
+                )
+        }))
+        .into_any_element()
 }
 
 fn render_highlight_sheet(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> AnyElement {
@@ -3757,6 +3995,122 @@ fn render_highlight_sheet(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> A
         );
 
     overlay_shell(cx, 440., card)
+}
+
+/// Buttons for what list screens otherwise only offer by key: the language
+/// filter, the search field and refresh.
+fn screen_toolbar(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> Option<AnyElement> {
+    let query = match app.screen {
+        Screen::Downloads => &app.download_query,
+        Screen::Translations => &app.translation_query,
+        Screen::Languages => &app.language_query,
+        _ => return None,
+    };
+    let placeholder = match app.screen {
+        Screen::Downloads => "Search translations",
+        Screen::Languages => "Search languages",
+        _ => "Filter translations",
+    };
+    let border = cx.theme().border;
+    let hover = cx.theme().muted;
+    let surface = cx.theme().popover;
+    let muted = cx.theme().muted_foreground;
+    let pill = move |id: &'static str| {
+        h_flex()
+            .id(id)
+            .flex_shrink_0()
+            .h(px(34.))
+            .items_center()
+            .gap(px(8.))
+            .px(px(12.))
+            .rounded(px(10.))
+            .cursor_pointer()
+            .bg(surface)
+            .border_1()
+            .border_color(border)
+            .text_size(px(13.))
+            .hover(move |style| style.bg(hover))
+    };
+
+    let mut bar = h_flex().w_full().items_center().gap(px(8.)).pb(px(14.));
+
+    if app.screen == Screen::Downloads {
+        let language = app
+            .download_language
+            .as_deref()
+            .and_then(|code| {
+                app.language_options()
+                    .into_iter()
+                    .find(|(option, _, _)| option.as_deref() == Some(code))
+                    .map(|(_, label, _)| label)
+            })
+            .unwrap_or_else(|| "All languages".to_string());
+        bar = bar.child(
+            pill("toolbar-language")
+                .on_click(cx.listener(|this, _, _, cx| this.open_languages(cx)))
+                .child(Icon::new(IconName::Globe).size(px(14.)).text_color(muted))
+                .child(language)
+                .child(
+                    Icon::new(IconName::ChevronDown)
+                        .size(px(12.))
+                        .text_color(muted),
+                ),
+        );
+    }
+
+    let has_query = !query.trim().is_empty();
+    bar = bar.child(
+        pill("toolbar-search")
+            .flex_1()
+            .min_w_0()
+            .on_click(cx.listener(|this, _, window, cx| this.open_filter(window, cx)))
+            .child(Icon::new(IconName::Search).size(px(14.)).text_color(muted))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(if has_query {
+                        cx.theme().foreground
+                    } else {
+                        muted
+                    })
+                    .child(if has_query {
+                        query.clone()
+                    } else {
+                        placeholder.to_string()
+                    }),
+            )
+            .when(has_query, |search| {
+                search.child(
+                    div()
+                        .id("toolbar-clear")
+                        .rounded_full()
+                        .p(px(3.))
+                        .hover(move |style| style.bg(border))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.clear_filter(cx);
+                        }))
+                        .child(Icon::new(IconName::X).size(px(12.)).text_color(muted)),
+                )
+            })
+            .child(div().text_size(px(11.)).text_color(muted).child("/")),
+    );
+
+    if app.screen == Screen::Downloads {
+        bar = bar.child(
+            pill("toolbar-refresh")
+                .on_click(cx.listener(|this, _, _, cx| this.refresh_catalog(cx)))
+                .child(
+                    Icon::new(IconName::RefreshCw)
+                        .size(px(14.))
+                        .text_color(muted),
+                )
+                .child("Refresh"),
+        );
+    }
+    Some(bar.into_any_element())
 }
 
 fn render_simple_screen(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> impl IntoElement {
@@ -4023,6 +4377,7 @@ fn render_simple_screen(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> imp
                             .child("Esc"),
                     ),
             )
+            .children(screen_toolbar(app, cx))
             .child(
                 v_flex()
                     .id("screen-list")

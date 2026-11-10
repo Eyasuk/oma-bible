@@ -11,6 +11,11 @@ pub struct Translation {
     pub language: String,
     pub abbreviation: String,
     pub books: Vec<BibleBook>,
+    /// Some printed Bibles join verses ("2-3"). Such sources leave the first
+    /// verse empty and keep the text on the last one; the reader then labels
+    /// the verse as a range.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub joined_verses: bool,
 }
 
 impl Translation {
@@ -25,7 +30,33 @@ impl Translation {
             language: language.into(),
             abbreviation: abbreviation.into(),
             books,
+            joined_verses: false,
         }
+    }
+
+    /// The USFM code of a book: its stored code, or one inferred from a
+    /// standard 66, 39 (Old Testament) or 27 (New Testament) book layout.
+    pub fn book_id(&self, index: usize) -> Option<String> {
+        let book = self.books.get(index)?;
+        if !book.id.is_empty() {
+            return Some(book.id.clone());
+        }
+        let offset = match self.books.len() {
+            66 | 39 => 0,
+            27 => 39,
+            _ => return None,
+        };
+        super::canon::BOOKS
+            .get(offset + index)
+            .map(|(id, _)| (*id).to_string())
+    }
+
+    /// Finds a book by its USFM code.
+    pub fn book_index_by_id(&self, id: &str) -> Option<usize> {
+        (0..self.books.len()).find(|index| {
+            self.book_id(*index)
+                .is_some_and(|book_id| book_id.eq_ignore_ascii_case(id))
+        })
     }
 
     /// Reads a translation from a JSON file.
@@ -88,7 +119,7 @@ mod tests {
 
     #[test]
     fn loads_a_translation_from_json() {
-        let path = crate::data_dir().join("kjv.json");
+        let path = crate::fixtures_dir().join("kjv.json");
         let translation = Translation::from_file(path).unwrap();
 
         assert_eq!(translation.abbreviation, "KJV");

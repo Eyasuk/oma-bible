@@ -11,6 +11,7 @@ pub enum Tool {
     Note,
     Highlight,
     Copy,
+    Explore,
     Study,
     Settings,
 }
@@ -28,12 +29,13 @@ impl Tool {
     ];
 
     /// The wheel has room for every tool, clockwise from the top.
-    pub const WHEEL: [Self; 7] = [
+    pub const WHEEL: [Self; 8] = [
         Self::Chapters,
         Self::Bookmark,
         Self::Note,
         Self::Highlight,
         Self::Copy,
+        Self::Explore,
         Self::Study,
         Self::Settings,
     ];
@@ -45,6 +47,7 @@ impl Tool {
             Self::Note => IconName::StickyNote,
             Self::Highlight => IconName::Highlighter,
             Self::Copy => IconName::Copy,
+            Self::Explore => IconName::Waypoints,
             Self::Study => IconName::BookMarked,
             Self::Settings => IconName::Settings,
         }
@@ -57,6 +60,7 @@ impl Tool {
             Self::Note => "Note",
             Self::Highlight => "Highlight",
             Self::Copy => "Copy",
+            Self::Explore => "Study verse",
             Self::Study => "Study",
             Self::Settings => "Settings",
         }
@@ -70,6 +74,7 @@ impl Tool {
             Self::Note => "M",
             Self::Highlight => "H",
             Self::Copy => "y",
+            Self::Explore => "r",
             Self::Study => "S",
             Self::Settings => ",",
         }

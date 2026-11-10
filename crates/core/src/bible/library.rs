@@ -13,26 +13,12 @@ impl Library {
         Self::default()
     }
 
-    /// Loads bundled translations followed by downloaded ones.
+    /// Loads the translations downloaded from the Bible API.
     ///
-    /// Missing directories are ignored so a fresh install can start with no
-    /// translations and offer the download screen. Downloaded translations win
-    /// when they share an abbreviation with a bundled one.
+    /// There are no built-in translations. A missing directory is ignored so
+    /// a fresh install starts empty and offers the download screen.
     pub fn load_default() -> Self {
-        let mut library = Self::new();
-        let bundled = crate::data_dir();
-        let downloaded = crate::user_data_dir();
-
-        if let Ok(loaded) = Self::load_dir_lenient(&bundled) {
-            library.merge(loaded);
-        }
-
-        if downloaded != bundled
-            && let Ok(loaded) = Self::load_dir_lenient(&downloaded)
-        {
-            library.merge(loaded);
-        }
-
+        let mut library = Self::load_dir_lenient(crate::user_data_dir()).unwrap_or_default();
         library.sort();
         library
     }
@@ -92,12 +78,6 @@ impl Library {
         Ok(library)
     }
 
-    fn merge(&mut self, other: Self) {
-        for translation in other.translations {
-            self.insert(translation);
-        }
-    }
-
     /// Adds a translation, replacing an existing one with the same abbreviation.
     fn insert(&mut self, translation: Translation) {
         match self.translations.iter_mut().find(|existing| {
@@ -141,7 +121,7 @@ mod tests {
 
     #[test]
     fn loads_every_json_file_in_a_directory() {
-        let library = Library::load_dir(crate::data_dir()).unwrap();
+        let library = Library::load_dir(crate::fixtures_dir()).unwrap();
 
         assert!(library.translation("KJV").is_some());
         assert!(library.translation("AMH").is_some());
@@ -150,14 +130,14 @@ mod tests {
 
     #[test]
     fn translations_are_sorted_by_name() {
-        let library = Library::load_dir(crate::data_dir()).unwrap();
+        let library = Library::load_dir(crate::fixtures_dir()).unwrap();
 
         assert_eq!(library.translations()[0].abbreviation, "KJV");
     }
 
     #[test]
     fn translation_lookup_ignores_case() {
-        let library = Library::load_dir(crate::data_dir()).unwrap();
+        let library = Library::load_dir(crate::fixtures_dir()).unwrap();
 
         assert_eq!(
             library

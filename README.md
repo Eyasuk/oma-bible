@@ -53,6 +53,8 @@ in GPUI, `h` / `l` change chapters directly.
 | `m` | Toggle a bookmark on the selected verse |
 | `M` | Open the selected verse's notes, or write a new one (GPUI: a verse can hold many notes) |
 | `H` | Highlight the selected verse (GPUI) |
+| `r` | Study the selected verse: cross-references, commentary, footnotes (GPUI) |
+| `c` | Open the study sheet on the commentary tab (GPUI) |
 | `Ctrl+Shift+D` | Move the shortcut dock to the next edge, or hide it (GPUI) |
 | `Space` / right-click | Open the action wheel (GPUI) |
 | `S` | Bookmarks and study screen |
@@ -89,7 +91,7 @@ left, top, or right edge, or hides it; the choice is saved.
 Right-click anywhere in the text to open the action wheel around the pointer;
 the verse under the pointer becomes the selected one. `Space` opens it in the
 middle of the window. The hub names the tool under the pointer and its key. Press
-`1`–`7` or a tool's own key (`o`, `m`, `M`, `H`, `y`, `S`, `,`) to pick one, or `Esc`
+`1`–`8` or a tool's own key (`o`, `m`, `M`, `H`, `y`, `r`, `S`, `,`) to pick one, or `Esc`
 to close.
 
 Notes in the open chapter lie in a loose pile at the middle of the right edge
@@ -105,6 +107,17 @@ Type a reference such as `John 3:16-18` in the field under the text and press
 `Enter` to quote any verse from the open translation. Quoted verses are lines
 starting with `>`. Notes live in `notes.json`; the first time it is missing, the
 notes already kept on bookmarks are copied in.
+
+The study sheet (`r`, `c`, or **Study verse** on the wheel) has three tabs:
+**Cross-references** from the open-cross-ref dataset, strongest first, shown in
+the open translation (click one or press `Enter` to go there); **Commentary**
+from one of the API's commentaries (Matthew Henry by default; `c` or the
+commentary button switches, and **Settings → Commentary** opens a dropdown of
+every commentary; the choice is saved), showing the section that
+covers the verse; and **Footnotes** from the translation itself. `Tab`, `h` /
+`l` or `1`–`3` switch tabs. Study data is fetched once per chapter and cached in
+`$XDG_CACHE_HOME/oma-bible` for offline use. Section headings from the
+translation appear above the verses they introduce.
 
 Some translations have empty versification gaps (for example Revelation 1:5–6 in
 the Amharic text). The GPUI reader hides empty verses and `j` / `k` skip them.
@@ -136,6 +149,7 @@ Amharic download to pick up the new font. Other scripts use the fonts already
 installed by the system; when one is missing the app names the script so the
 right package can be installed.
 
+
 ## Themes
 
 On Omarchy, both front ends use the current Omarchy theme. Run
@@ -164,21 +178,34 @@ are always available as neutral fallbacks off Omarchy.
 The **Add a translation** screen reads the catalogue from
 [bible.helloao.org](https://bible.helloao.org/) and lists every available
 translation, grouped and filterable by language. Downloads are streamed to disk
-and can be cancelled at any time.
+and can be cancelled at any time. In the desktop app a toolbar above the list has a
+language button (same as `l`), a search field (same as `/`, with a clear
+button) and Refresh (same as `r`).
 
 - Catalogue: `GET /api/available_translations.json`
 - Translation: `GET /api/{id}/complete.simple.json`
-- Downloads are saved as JSON in the user data directory and merged over
-  bundled translations by abbreviation.
+- Downloads are saved as JSON in the user data directory. There are no
+  built-in translations: a fresh install opens the download screen.
 - The last language filter is remembered in settings.
 
-Downloaded translations survive restarts. A download that shares an
-abbreviation with a bundled file replaces it in the library.
+Downloaded translations survive restarts. The reader shows exactly what the API
+provides; some API translations are incomplete (for example `amh_amh` is the
+New Testament only and is missing verses in the source data).
+
+The catalogue also lists **መጽሐፍ ቅዱስ (ሙሉ)** (`amh_full`), the complete Amharic
+Bible, Old and New Testament. It is not from the API: it is downloaded from
+[magna25/amharic-bible-json](https://github.com/magna25/amharic-bible-json)
+(converted from wordproject.org). The Amharic Bible joins some verses in print
+("2-3"); the reader labels those as ranges. Psalm titles show as headings.
+
+Translations downloaded before book codes, headings and footnotes were added
+still read normally; download them again to get cross-references for unusual
+book layouts, headings and footnotes.
 
 ## Data
 
-Bundled translations live in `crates/core/data` as JSON files. The file shape
-matches the Rust structs:
+Translations are stored as JSON files in the user data directory. The file
+shape matches the Rust structs:
 
 ```json
 {
@@ -197,19 +224,19 @@ matches the Rust structs:
 ```
 
 Every `*.json` file in the data directory is loaded, then translations are
-sorted by name. The bundled files are small samples; use **Add a translation**
-for a complete Bible.
+sorted by name. Small sample files for the tests live in
+`crates/core/tests/fixtures` and are not loaded by the app.
 
 ### Storage locations
 
 | What | Default path | Override |
 |---|---|---|
-| Bundled data | `crates/core/data` | `OMA_BIBLE_DATA_DIR` |
 | Downloaded translations | `$XDG_DATA_HOME/oma-bible` | `OMA_BIBLE_DOWNLOAD_DIR` |
 | Settings | `$XDG_CONFIG_HOME/oma-bible/settings.json` | `OMA_BIBLE_CONFIG_DIR` |
 | Bookmarks and notes | `$XDG_STATE_HOME/oma-bible/bookmarks.json` | `OMA_BIBLE_STATE_DIR` |
 | Verse highlights (GPUI) | `$XDG_STATE_HOME/oma-bible/highlights.json` | `OMA_BIBLE_STATE_DIR` |
 | Study notes (GPUI) | `$XDG_STATE_HOME/oma-bible/notes.json` | `OMA_BIBLE_STATE_DIR` |
+| Cross-references and commentaries | `$XDG_CACHE_HOME/oma-bible/api` | `OMA_BIBLE_CACHE_DIR` |
 
 `OMA_BIBLE_DATA_DIR` also redirects downloads so a single override can point the
 whole app at a test library.

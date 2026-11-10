@@ -1199,7 +1199,11 @@ impl App {
                             }
                             self.screen = Screen::Reader;
                             self.save_position();
-                            let mut message = format!("Added {} from bible.helloao.org", done.name);
+                            let mut message = format!(
+                                "Added {} from {}",
+                                done.name,
+                                oma_bible_core::remote::source_name(&done.id)
+                            );
                             if let Some(notice) = done.font_notice {
                                 message.push_str("  ·  ");
                                 message.push_str(&notice);
