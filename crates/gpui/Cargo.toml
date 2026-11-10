@@ -2,6 +2,7 @@
 name = "oma-bible-gpui"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 # The desktop app is the main one, so it gets the plain name.
 [[bin]]

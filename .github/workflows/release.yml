@@ -43,7 +43,7 @@ jobs:
           mkdir "$name"
           cp target/release/oma-bible target/release/oma-bible-tui "$name/"
           cp packaging/oma-bible.desktop packaging/oma-bible-tui.desktop \
-             packaging/install.sh README.md "$name/"
+             packaging/install.sh README.md LICENSE "$name/"
           tar -czf "$name.tar.gz" "$name"
           sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
           echo "ASSET=$name" >> "$GITHUB_ENV"

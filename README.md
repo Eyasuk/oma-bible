@@ -1,8 +1,18 @@
 # Oma Bible
 
-A native Bible reader for Omarchy Linux, written in Rust. The interface follows
-the quiet, document-first look of [Omawrite](https://github.com/omacom/omawrite):
-theme colours, restrained chrome, a centred reading column, and a muted footer.
+Your own quiet place to read Scripture. A native Rust Bible reader for Linux,
+desktop and terminal, with Hebrew & Greek word study, cross-references,
+commentary and right-to-left scripts. It follows your Omarchy theme live. The
+King James Version is built in, so it works offline from the first start.
+
+**Oma** is Estonian for *one's own*, as in *oma kodu*, "one's own home".
+Oma Bible is meant to feel like that: nothing on the page but Scripture until
+you reach for a study tool. The name also nods to Omarchy, the desktop it
+grew up on.
+
+The interface follows the quiet, document-first look of
+[Omawrite](https://github.com/omacom/omawrite): theme colours, restrained
+chrome, a centred reading column, and a muted footer.
 
 ## Workspace
 
@@ -366,3 +376,25 @@ primary desktop frontend; the shared `oma-bible-core` crate keeps data, themes,
 downloads, settings, and bookmarks consistent across the TUI and GPUI apps.
 
 The GTK frontend has been removed from the workspace as part of the switch.
+
+## Credits and licences
+
+Oma Bible's code is released under the [MIT License](LICENSE).
+
+The Bible texts and study data keep their own licences:
+
+| Data | Source | Licence |
+|---|---|---|
+| King James Version (built in) | [eBible.org](https://ebible.org/Scriptures/details.php?id=eng-kjv2006) via the Free Use Bible API | Public domain |
+| Original Hebrew and Greek words (built in) | [Berean Standard Bible](https://berean.bible/) interlinear | Public domain |
+| Lexicon (built in) | [STEPBible.org](https://github.com/STEPBible/STEPBible-Data) / Tyndale House, Cambridge: Translators Brief lexicons of Extended Strongs (TBESH, TBESG) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| Cross-references (built in) | [OpenBible.info](https://www.openbible.info/labs/cross-references/) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| Matthew Henry's commentary (built in) | Matthew Henry (1706–1721) via the Free Use Bible API | Public domain |
+| Other translations and commentaries | Downloaded on demand from the [Free Use Bible API](https://bible.helloao.org/) | Each one's own; see the API catalogue |
+| Complete Amharic Bible (download) | [magna25/amharic-bible-json](https://github.com/magna25/amharic-bible-json), from wordproject.org | MIT (conversion) |
+
+The built-in data was reformatted to fit the app (unused fields removed,
+compressed into packs). The desktop app is built on
+[GPUI](https://github.com/zed-industries/zed) and gpui-kit (Apache-2.0); the
+terminal app on [ratatui](https://ratatui.rs) (MIT). Thanks to everyone who
+made these texts and tools free to use.

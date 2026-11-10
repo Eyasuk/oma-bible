@@ -2,6 +2,7 @@
 name = "oma-bible-bundle"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 publish = false
 description = "Builds the data packs built into Oma Bible (KJV and its study data)"
 

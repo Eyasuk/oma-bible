@@ -729,6 +729,14 @@ fn references_body(
                         )),
                 )
         }))
+        .child(
+            div()
+                .pt(px(6.))
+                .text_size(px(10.))
+                .line_height(px(15.))
+                .text_color(cx.theme().muted_foreground)
+                .child("Cross-references: OpenBible.info, CC BY 4.0."),
+        )
         .into_any_element()
 }
 
