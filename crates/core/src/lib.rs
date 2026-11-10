@@ -1,4 +1,5 @@
 pub mod bible;
+pub mod direction;
 pub mod fonts;
 pub mod remote;
 pub mod storage;

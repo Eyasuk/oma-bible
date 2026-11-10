@@ -53,7 +53,6 @@ fn paint(
         return;
     };
 
-    let font = f32::from(font_size);
     let mut row = 0usize;
     for line in &lines {
         for segment in segments(line, text) {
@@ -61,17 +60,13 @@ fn paint(
                 row += 1;
                 continue;
             };
-            let top = bounds.top() + line_height * row as f32;
-            let centre = f32::from(top) + f32::from(line_height) / 2.0 + font * STROKE_DROP;
-            let x0 = f32::from(bounds.left()) + left - OVERHANG;
-            let x1 = f32::from(bounds.left()) + right + OVERHANG;
-            let line_seed = seed.wrapping_mul(97).wrapping_add(row as u32);
-            stroke(
-                x0,
-                x1,
-                centre,
-                font * STROKE_HEIGHT,
-                line_seed,
+            stroke_line(
+                f32::from(bounds.left()) + left,
+                f32::from(bounds.left()) + right,
+                bounds.top() + line_height * row as f32,
+                line_height,
+                font_size,
+                seed.wrapping_mul(97).wrapping_add(row as u32),
                 color,
                 alpha,
                 window,
@@ -79,6 +74,34 @@ fn paint(
             row += 1;
         }
     }
+}
+
+/// Paints the stroke for one line of words spanning `left..right`, with the
+/// line box starting at `top`.
+#[allow(clippy::too_many_arguments)]
+pub fn stroke_line(
+    left: f32,
+    right: f32,
+    top: Pixels,
+    line_height: Pixels,
+    font_size: Pixels,
+    seed: u32,
+    color: Hsla,
+    alpha: f32,
+    window: &mut Window,
+) {
+    let font = f32::from(font_size);
+    let centre = f32::from(top) + f32::from(line_height) / 2.0 + font * STROKE_DROP;
+    stroke(
+        left - OVERHANG,
+        right + OVERHANG,
+        centre,
+        font * STROKE_HEIGHT,
+        seed,
+        color,
+        alpha,
+        window,
+    );
 }
 
 /// The left and right x of the words on each visual line of `line`,

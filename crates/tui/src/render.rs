@@ -9,6 +9,7 @@ use ratatui::{
 };
 
 use crate::app::{App, Focus, Screen};
+use crate::bidi;
 
 pub(crate) fn ui(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
@@ -63,7 +64,7 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App) {
     if let Some(translation) = app.translation() {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
-            translation.name.as_str(),
+            bidi::visual(&translation.name).into_owned(),
             Style::new()
                 .fg(color(theme.foreground))
                 .add_modifier(Modifier::BOLD),
@@ -92,7 +93,7 @@ fn render_books(frame: &mut Frame, area: Rect, app: &App) {
             translation
                 .books
                 .iter()
-                .map(|book| ListItem::new(book.name.as_str()))
+                .map(|book| ListItem::new(bidi::visual(&book.name).into_owned()))
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
@@ -134,6 +135,12 @@ fn render_verses(frame: &mut Frame, area: Rect, app: &mut App) {
     let mut lines = Vec::new();
     let mut verse_starts = Vec::new();
     let show_numbers = app.settings.show_verse_numbers;
+    // Right-to-left translations are wrapped in reading order, then each
+    // line is reordered for the terminal and set against the right edge
+    // with the verse number on the right.
+    let rtl = app
+        .translation()
+        .is_some_and(|translation| translation.direction().is_rtl());
 
     if let Some(chapter) = app.chapter() {
         if chapter.verse_count() == 0 {
@@ -162,7 +169,9 @@ fn render_verses(frame: &mut Frame, area: Rect, app: &mut App) {
             } else {
                 Style::new().fg(color(theme.foreground))
             };
-            let prefix = if show_numbers {
+            let prefix = if show_numbers && rtl {
+                format!(" {:<3}", index + 1)
+            } else if show_numbers {
                 format!("{:>3} ", index + 1)
             } else {
                 String::new()
@@ -180,10 +189,20 @@ fn render_verses(frame: &mut Frame, area: Rect, app: &mut App) {
                 } else {
                     continuation.as_str()
                 };
-                lines.push(Line::from(vec![
-                    Span::styled(line_prefix.to_string(), verse_style),
-                    Span::styled(part.to_string(), verse_style),
-                ]));
+                if rtl {
+                    let shown = bidi::visual(part);
+                    let pad = " ".repeat(width.saturating_sub(bidi::width(&shown)));
+                    lines.push(Line::from(vec![
+                        Span::raw(pad),
+                        Span::styled(shown.into_owned(), verse_style),
+                        Span::styled(line_prefix.to_string(), verse_style),
+                    ]));
+                } else {
+                    lines.push(Line::from(vec![
+                        Span::styled(line_prefix.to_string(), verse_style),
+                        Span::styled(part.to_string(), verse_style),
+                    ]));
+                }
             }
 
             lines.push(Line::from(""));
@@ -256,7 +275,9 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
 
 fn verse_title(app: &App) -> String {
     match (app.book(), app.chapter()) {
-        (Some(book), Some(chapter)) => format!(" {} {} ", book.name, chapter.number),
+        (Some(book), Some(chapter)) => {
+            bidi::visual(&format!(" {} {} ", book.name, chapter.number)).into_owned()
+        }
         _ => " Verses ".to_string(),
     }
 }

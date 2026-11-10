@@ -149,6 +149,20 @@ Amharic download to pick up the new font. Other scripts use the fonts already
 installed by the system; when one is missing the app names the script so the
 right package can be installed.
 
+### Right-to-left languages
+
+Arabic, Hebrew, Persian, Urdu, Syriac and other right-to-left translations are
+detected from their text and read from the right: lines wrap in reading order
+and line up against the right edge, and the verse number, cursor bar and
+section headings move to the right side. The desktop app keeps the full
+vowel marks and highlights.
+
+Most terminals (Alacritty, Ghostty, foot, kitty) neither reorder right-to-left
+text nor join Arabic letters, so the TUI does both itself. Terminal fonts
+cannot draw vowel points on a letter, so the TUI shows Arabic and Hebrew
+without harakat or niqqud. Set `OMA_BIBLE_TERMINAL_MARKS=1` to keep them, and
+`OMA_BIBLE_TERMINAL_BIDI=1` in a terminal that does its own bidi (GNOME
+Terminal/VTE, Konsole, mlterm) so the text is not reversed twice.
 
 ## Themes
 

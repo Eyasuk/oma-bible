@@ -8,3 +8,5 @@ oma-bible-core.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 textwrap.workspace = true
+unicode-bidi.workspace = true
+unicode-width.workspace = true

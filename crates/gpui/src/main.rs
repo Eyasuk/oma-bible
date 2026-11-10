@@ -6,6 +6,7 @@ mod chrome;
 mod explore;
 mod marker;
 mod reader;
+mod rtl;
 mod theme;
 mod tools;
 

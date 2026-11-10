@@ -16,6 +16,7 @@ use oma_bible_core::{
 use ratatui::DefaultTerminal;
 
 mod app;
+mod bidi;
 mod render;
 
 use app::{App, Screen};

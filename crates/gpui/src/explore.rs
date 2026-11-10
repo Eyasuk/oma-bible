@@ -563,13 +563,15 @@ fn references_body(
                     div()
                         .text_size(px(14.))
                         .line_height(px(22.))
-                        .line_clamp(3)
                         .text_color(if text.is_some() {
                             cx.theme().foreground
                         } else {
                             cx.theme().muted_foreground
                         })
-                        .child(text.unwrap_or_else(|| "Not in this translation".to_string())),
+                        .child(crate::rtl::paragraph(
+                            text.unwrap_or_else(|| "Not in this translation".to_string()),
+                            Some(3),
+                        )),
                 )
         }))
         .into_any_element()
@@ -705,7 +707,7 @@ fn footnotes_body(footnotes: &[String], cx: &App) -> AnyElement {
                 .border_color(cx.theme().border)
                 .text_size(px(14.))
                 .line_height(px(22.))
-                .child(note.clone())
+                .child(crate::rtl::paragraph(note.clone(), None))
         }))
         .into_any_element()
 }

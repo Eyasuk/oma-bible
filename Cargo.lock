@@ -4672,6 +4672,8 @@ dependencies = [
  "oma-bible-core",
  "ratatui",
  "textwrap",
+ "unicode-bidi",
+ "unicode-width",
 ]
 
 [[package]]

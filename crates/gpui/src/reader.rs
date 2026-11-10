@@ -6,6 +6,7 @@ use gpui_kit::*;
 
 use crate::app::{NoteTarget, OmaBibleApp};
 use crate::marker::marker;
+use crate::rtl::{Highlight, RtlText};
 use crate::theme as app_theme;
 
 /// The reading surface: one quiet column, large type and no chrome.
@@ -50,6 +51,9 @@ impl RenderOnce for ReaderView {
         let highlights = &state.highlights;
         let dark = state.themes.active().mode.is_dark();
         let joined_verses = translation.is_some_and(|translation| translation.joined_verses);
+        // Arabic, Hebrew and other right-to-left translations mirror the
+        // row: number on the right, text wrapped and aligned from the right.
+        let rtl = translation.is_some_and(|translation| translation.direction().is_rtl());
         let scroll = &state.reading_scroll;
 
         let reference = if book_name.is_empty() {
@@ -205,6 +209,9 @@ impl RenderOnce for ReaderView {
                     // The cursor verse gets a short accent bar in the gutter
                     // instead of a box; a multi-verse selection is a soft tint.
                     row = row.relative().rounded(px(12.));
+                    if rtl {
+                        row = row.flex_row_reverse();
+                    }
                     if in_visual {
                         row = row.bg(cx.theme().accent.opacity(if dark { 0.10 } else { 0.08 }));
                     } else {
@@ -212,11 +219,14 @@ impl RenderOnce for ReaderView {
                         row = row.hover(move |style| style.bg(hover));
                     }
                     if is_selected {
+                        let bar = div().absolute();
+                        let bar = if rtl {
+                            bar.right(px(18.))
+                        } else {
+                            bar.left(px(18.))
+                        };
                         row = row.child(
-                            div()
-                                .absolute()
-                                .left(px(18.))
-                                .top(px(16.))
+                            bar.top(px(16.))
                                 .bottom(px(16.))
                                 .w(px(3.))
                                 .rounded_full()
@@ -236,6 +246,7 @@ impl RenderOnce for ReaderView {
                                 .text_color(number_color)
                                 .min_w(px(22.))
                                 .pt(px(8.))
+                                .when(rtl, |number| number.text_right())
                                 .child(number_label),
                         );
                     }
@@ -246,6 +257,20 @@ impl RenderOnce for ReaderView {
                             .line_height(px(font_size * 1.62))
                             .text_color(cx.theme().muted_foreground)
                             .child("—")
+                            .into_any_element()
+                    } else if rtl {
+                        div()
+                            .w_full()
+                            .text_size(px(font_size))
+                            .line_height(px(font_size * 1.62))
+                            .text_color(cx.theme().foreground)
+                            .child(RtlText::new(verse).highlight(highlight.map(|color| {
+                                Highlight {
+                                    color: app_theme::highlight(color, cx),
+                                    alpha: if dark { 0.30 } else { 0.34 },
+                                    seed: verse_number.wrapping_mul(2_654_435_761) ^ chapter_number,
+                                }
+                            })))
                             .into_any_element()
                     } else {
                         let style = TextStyleRefinement {
@@ -331,17 +356,24 @@ impl RenderOnce for ReaderView {
                             .w_full()
                             .items_center()
                             .children(headings.into_iter().map(|heading| {
-                                div()
-                                    .w_full()
-                                    .max_w(px(760.))
-                                    .px(px(40.))
-                                    .pl(px(if show_numbers { 76. } else { 40. }))
+                                let indent = px(if show_numbers { 76. } else { 40. });
+                                let heading_row = div().w_full().max_w(px(760.)).px(px(40.));
+                                let heading_row = if rtl {
+                                    heading_row.pr(indent)
+                                } else {
+                                    heading_row.pl(indent)
+                                };
+                                heading_row
                                     .pt(px(22.))
                                     .pb(px(2.))
                                     .text_size(px((font_size * 0.82).max(13.)))
                                     .line_height(px((font_size * 0.82).max(13.) * 1.5))
                                     .text_color(cx.theme().muted_foreground)
-                                    .child(heading)
+                                    .child(if rtl {
+                                        RtlText::new(heading).into_any_element()
+                                    } else {
+                                        heading.into_any_element()
+                                    })
                             }))
                             .child(row)
                             .into_any_element()
