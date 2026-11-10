@@ -220,17 +220,19 @@ Terminal/VTE, Konsole, mlterm) so the text is not reversed twice.
 
 ## Themes
 
-On Omarchy, both front ends use the current Omarchy theme. Run
-`omarchy theme set <name>` to change it; a running reader notices the change
-within a second and redraws with the new colours. No restart is needed. In the
-GPUI theme screen this list is read-only and marks the active Omarchy theme.
+Open the theme screen with `T` (or **Settings → Theme**).
 
-Off Omarchy, the apps still read the installed `colors.toml` files:
+**On Omarchy** the first row is **Follow Omarchy**, the default. While it is
+on, both apps use the current Omarchy theme and redraw within a second when you
+run `omarchy theme set <name>`, with no restart. Pick any other theme to use it
+just in Oma Bible; the desktop's changes are then ignored until you pick
+**Follow Omarchy** again. The choice is saved.
 
-- **TUI:** opens the theme picker at startup when more than one theme is found.
-- **GPUI:** starts with a palette matching the system light/dark appearance. A
-  theme chosen in the theme screen is saved in settings and wins over the
-  system appearance on later launches.
+**Off Omarchy** every row is a theme, and the one you pick is saved:
+
+- **TUI:** opens the theme picker at startup until a theme has been picked.
+- **GPUI:** until a theme is picked, starts with a palette matching the system
+  light/dark appearance and follows it.
 
 Themes are discovered from:
 
@@ -239,7 +241,8 @@ Themes are discovered from:
 3. `/usr/share/omarchy/themes/*/colors.toml` — stock fallback
 
 User themes win when a slug exists in both places. `Oma Dark` and `Oma Light`
-are always available as neutral fallbacks off Omarchy.
+are always available, so a machine without Omarchy still has a dark and a
+light choice.
 
 ## Bible API downloads
 

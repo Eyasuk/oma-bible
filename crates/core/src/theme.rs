@@ -269,6 +269,17 @@ pub struct ThemeCatalog {
     themes: Vec<Theme>,
     active: Theme,
     on_omarchy: bool,
+    /// On Omarchy: whether the app follows the desktop theme live. Picking
+    /// a theme in the app turns this off until "Follow Omarchy" is picked.
+    following: bool,
+}
+
+/// One row of the theme picker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThemeChoice<'a> {
+    /// Use whatever theme Omarchy is on, and keep up with changes.
+    FollowOmarchy,
+    Theme(&'a Theme),
 }
 
 impl ThemeCatalog {
@@ -296,11 +307,12 @@ impl ThemeCatalog {
             }
         }
 
-        if !on_omarchy && !themes.iter().any(|theme| theme.slug == FALLBACK_SLUG) {
+        // Oma Dark and Oma Light are always on offer, on Omarchy too.
+        if !themes.iter().any(|theme| theme.slug == FALLBACK_SLUG) {
             themes.push(Theme::fallback());
             sort_themes(&mut themes);
         }
-        if !on_omarchy && !themes.iter().any(|theme| theme.slug == FALLBACK_LIGHT_SLUG) {
+        if !themes.iter().any(|theme| theme.slug == FALLBACK_LIGHT_SLUG) {
             themes.push(Theme::fallback_light());
             sort_themes(&mut themes);
         }
@@ -319,6 +331,7 @@ impl ThemeCatalog {
             themes,
             active,
             on_omarchy,
+            following: on_omarchy,
         }
     }
 
@@ -328,7 +341,61 @@ impl ThemeCatalog {
             themes: vec![Theme::fallback()],
             active: Theme::fallback(),
             on_omarchy: false,
+            following: false,
         }
+    }
+
+    /// Applies the theme saved in settings (`None` means "follow Omarchy"
+    /// on Omarchy, or "no choice yet" elsewhere). A saved theme that no
+    /// longer exists is ignored.
+    pub fn apply_saved(&mut self, saved: Option<&str>) {
+        if let Some(slug) = saved
+            && self.select_slug(slug)
+        {
+            self.following = false;
+        }
+    }
+
+    /// Whether the theme comes from Omarchy and follows it live.
+    pub fn is_following_omarchy(&self) -> bool {
+        self.on_omarchy && self.following
+    }
+
+    /// The theme picker's rows: on Omarchy, "Follow Omarchy" first, then
+    /// every theme.
+    pub fn choices(&self) -> Vec<ThemeChoice<'_>> {
+        let follow = self.on_omarchy.then_some(ThemeChoice::FollowOmarchy);
+        follow
+            .into_iter()
+            .chain(self.themes.iter().map(ThemeChoice::Theme))
+            .collect()
+    }
+
+    /// The picker row that is in use now.
+    pub fn choice_index(&self) -> usize {
+        if self.is_following_omarchy() {
+            return 0;
+        }
+        let offset = usize::from(self.on_omarchy);
+        self.current_index().map_or(0, |index| index + offset)
+    }
+
+    /// Uses the picker row at `index`. Returns what to save in settings
+    /// (`None` to follow Omarchy, or the theme's slug), or nothing when the
+    /// row does not exist.
+    pub fn choose(&mut self, index: usize) -> Option<Option<String>> {
+        let offset = usize::from(self.on_omarchy);
+        if self.on_omarchy && index == 0 {
+            self.following = true;
+            if let Some(theme) = load_active_theme() {
+                self.adopt(theme);
+            }
+            return Some(None);
+        }
+        let theme = self.themes.get(index.checked_sub(offset)?)?.clone();
+        self.active = theme;
+        self.following = false;
+        Some(Some(self.active.slug.clone()))
     }
 
     pub fn themes(&self) -> &[Theme] {
@@ -377,7 +444,7 @@ impl ThemeCatalog {
     /// session without restarting it. Off Omarchy the app keeps whatever theme
     /// the user picked, so this is a no-op.
     pub fn refresh_active(&mut self) -> bool {
-        if !self.on_omarchy {
+        if !self.is_following_omarchy() {
             return false;
         }
 
@@ -387,7 +454,13 @@ impl ThemeCatalog {
         if theme == self.active {
             return false;
         }
+        self.adopt(theme);
+        true
+    }
 
+    /// Makes `theme` (read from Omarchy) the active one, updating or adding
+    /// its entry in the list.
+    fn adopt(&mut self, theme: Theme) {
         match self
             .themes
             .iter_mut()
@@ -401,8 +474,14 @@ impl ThemeCatalog {
         }
 
         self.active = theme;
-        true
     }
+}
+
+/// The title of the theme Omarchy is on (`Tokyo Night`), if any.
+pub fn omarchy_theme_title() -> Option<String> {
+    let name = fs::read_to_string(state_home()?.join("omarchy/current/theme.name")).ok()?;
+    let name = name.trim();
+    (!name.is_empty()).then(|| title_from_slug(name))
 }
 
 /// `true` when the app is running inside an Omarchy session.
@@ -574,5 +653,71 @@ mod tests {
         assert_eq!(catalog.themes().len(), 1);
         assert_eq!(catalog.active().slug, FALLBACK_SLUG);
         assert!(!catalog.is_on_omarchy());
+    }
+}
+
+#[cfg(test)]
+mod choice_tests {
+    use super::*;
+
+    fn catalog(on_omarchy: bool) -> ThemeCatalog {
+        let themes = vec![Theme::fallback(), Theme::fallback_light()];
+        ThemeCatalog {
+            active: themes[0].clone(),
+            themes,
+            on_omarchy,
+            following: on_omarchy,
+        }
+    }
+
+    #[test]
+    fn on_omarchy_the_first_row_follows_the_desktop() {
+        let mut themes = catalog(true);
+        assert_eq!(themes.choices()[0], ThemeChoice::FollowOmarchy);
+        assert_eq!(themes.choices().len(), 3);
+        assert!(themes.is_following_omarchy());
+        assert_eq!(themes.choice_index(), 0);
+
+        // Picking a theme stops following and saves its slug.
+        let saved = themes.choose(2).unwrap();
+        assert_eq!(saved.as_deref(), Some(FALLBACK_LIGHT_SLUG));
+        assert!(!themes.is_following_omarchy());
+        assert_eq!(themes.choice_index(), 2);
+        assert!(
+            !themes.refresh_active(),
+            "a picked theme is not overwritten"
+        );
+
+        // Picking "Follow Omarchy" again saves nothing and follows.
+        assert_eq!(themes.choose(0), Some(None));
+        assert!(themes.is_following_omarchy());
+        assert_eq!(themes.choice_index(), 0);
+    }
+
+    #[test]
+    fn off_omarchy_every_row_is_a_theme() {
+        let mut themes = catalog(false);
+        assert!(matches!(themes.choices()[0], ThemeChoice::Theme(_)));
+        assert_eq!(
+            themes.choose(1).unwrap().as_deref(),
+            Some(FALLBACK_LIGHT_SLUG)
+        );
+        assert_eq!(themes.active().slug, FALLBACK_LIGHT_SLUG);
+        assert_eq!(themes.choice_index(), 1);
+        assert!(themes.choose(9).is_none());
+    }
+
+    #[test]
+    fn a_saved_theme_wins_over_omarchy() {
+        let mut themes = catalog(true);
+        themes.apply_saved(Some(FALLBACK_LIGHT_SLUG));
+        assert!(!themes.is_following_omarchy());
+        assert_eq!(themes.active().slug, FALLBACK_LIGHT_SLUG);
+
+        let mut themes = catalog(true);
+        themes.apply_saved(Some("no-such-theme"));
+        assert!(themes.is_following_omarchy());
+        themes.apply_saved(None);
+        assert!(themes.is_following_omarchy());
     }
 }

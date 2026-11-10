@@ -13,7 +13,7 @@ use oma_bible_core::{
     fonts,
     remote::{self, DownloadControl, RemoteCatalog, RemoteTranslation},
     storage::{Bookmark, Bookmarks, HighlightColor, Highlights, Notes, Settings},
-    theme::ThemeCatalog,
+    theme::{ThemeCatalog, ThemeChoice, omarchy_theme_title},
 };
 
 use crate::actions::*;
@@ -31,11 +31,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         let library = Library::load_default();
         let mut themes = ThemeCatalog::load();
         let settings = Settings::load();
-        if !themes.is_on_omarchy()
-            && let Some(slug) = settings.theme.as_deref()
-        {
-            themes.select_slug(slug);
-        }
+        // A theme picked in the app wins, on Omarchy too; none saved means
+        // follow Omarchy (or the system appearance elsewhere).
+        themes.apply_saved(settings.theme.as_deref());
         let bookmarks = Bookmarks::load();
         let highlights = Highlights::load();
 
@@ -357,7 +355,7 @@ impl OmaBibleApp {
         };
 
         app.restore_position();
-        app.theme_selected = app.themes.current_index().unwrap_or(0);
+        app.theme_selected = app.themes.choice_index();
         app.translation_selected = app.translation_index;
         app.nav_book_index = app.book_index;
         app.nav_chapter_index = app.chapter_index;
@@ -370,7 +368,7 @@ impl OmaBibleApp {
 
         // `restore_position` restores settings, so the palette is installed
         // once the app owns its theme catalog.
-        app.theme_selected = app.themes.current_index().unwrap_or(0);
+        app.theme_selected = app.themes.choice_index();
         app_theme::apply(app.themes.active(), cx);
         app.observe_appearance(window, cx);
         app.watch_omarchy_theme(cx);
@@ -381,7 +379,7 @@ impl OmaBibleApp {
     /// Apply the current core palette to gpui-kit's global theme.
     pub fn apply_current_theme(&mut self, cx: &mut Context<Self>) {
         app_theme::apply(self.themes.active(), cx);
-        self.theme_selected = self.themes.current_index().unwrap_or(0);
+        self.theme_selected = self.themes.choice_index();
         cx.notify();
     }
 
@@ -725,9 +723,8 @@ impl OmaBibleApp {
         self.settings.book = self.book().map(|b| b.name.clone());
         self.settings.chapter = self.chapter().map(|c| c.number);
         self.settings.verse = self.chapter().map(|_| self.verse_index as u32 + 1);
-        if !self.themes.is_on_omarchy() {
-            self.settings.theme = Some(self.themes.active().slug.clone());
-        }
+        // The theme is saved only when it is picked, so moving around
+        // never turns "follow the desktop" into a fixed choice.
         let _ = self.settings.save();
     }
 
@@ -950,7 +947,7 @@ impl OmaBibleApp {
     }
     pub fn open_themes(&mut self, from: Screen, cx: &mut Context<Self>) {
         self.theme_return = from;
-        self.theme_selected = self.themes.current_index().unwrap_or(0);
+        self.theme_selected = self.themes.choice_index();
         self.screen = Screen::Themes;
         self.screen_scroll.scroll_to_item(self.theme_selected);
         cx.notify();
@@ -1115,15 +1112,8 @@ impl OmaBibleApp {
     fn activate_settings_sheet_item(&mut self, cx: &mut Context<Self>) {
         match self.settings_selected {
             0 => {
-                if self.themes.is_on_omarchy() {
-                    self.status =
-                        format!("Omarchy controls the theme · {}", self.themes.active().name)
-                            .into();
-                    cx.notify();
-                } else {
-                    self.overlay = Overlay::None;
-                    self.open_themes(self.screen, cx);
-                }
+                self.overlay = Overlay::None;
+                self.open_themes(self.screen, cx);
             }
             1 => {
                 self.overlay = Overlay::None;
@@ -1382,7 +1372,7 @@ impl OmaBibleApp {
 
     fn screen_item_count(&self) -> usize {
         match self.screen {
-            Screen::Themes => self.themes.themes().len(),
+            Screen::Themes => self.themes.choices().len(),
             Screen::Translations => self.filtered_translations().len(),
             Screen::Downloads => self.filtered_remote().len(),
             Screen::Languages => self.language_options().len(),
@@ -1425,22 +1415,16 @@ impl OmaBibleApp {
     pub fn activate_screen_item(&mut self, cx: &mut Context<Self>) {
         match self.screen {
             Screen::Themes => {
-                if self.themes.is_on_omarchy() {
-                    self.status =
-                        format!("Omarchy controls the theme · {}", self.themes.active().name)
-                            .into();
-                    self.screen = self.theme_return;
-                    cx.notify();
-                    return;
-                }
-                let i = self
-                    .theme_selected
-                    .min(self.themes.themes().len().saturating_sub(1));
-                if self.themes.select(i) {
-                    self.settings.theme = Some(self.themes.active().slug.clone());
+                if let Some(saved) = self.themes.choose(self.theme_selected) {
+                    self.settings.theme = saved;
                     let _ = self.settings.save();
                     self.apply_current_theme(cx);
-                    self.status = format!("Theme: {}", self.themes.active().name).into();
+                    self.status = if self.themes.is_following_omarchy() {
+                        format!("Following Omarchy · {}", self.themes.active().name)
+                    } else {
+                        format!("Theme: {}", self.themes.active().name)
+                    }
+                    .into();
                 }
                 self.screen = self.theme_return;
             }
@@ -3609,8 +3593,17 @@ fn render_navigator(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> AnyElem
     overlay_shell(cx, 780., card)
 }
 
+/// The theme Omarchy is on right now, for the "Follow Omarchy" row.
+fn omarchy_theme_name(app: &OmaBibleApp) -> String {
+    if app.themes.is_following_omarchy() {
+        app.themes.active().name.clone()
+    } else {
+        omarchy_theme_title().unwrap_or_else(|| "unknown".to_string())
+    }
+}
+
 fn render_settings_sheet(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> AnyElement {
-    let theme_label = if app.themes.is_on_omarchy() {
+    let theme_label = if app.themes.is_following_omarchy() {
         format!("{} · Omarchy", app.themes.active().name)
     } else {
         app.themes.active().name.clone()
@@ -3694,7 +3687,7 @@ fn render_settings_sheet(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> An
                             div()
                                 .text_size(px(12.))
                                 .text_color(cx.theme().muted_foreground)
-                                .child(if app.themes.is_on_omarchy() {
+                                .child(if app.themes.is_following_omarchy() {
                                     "Theme follows Omarchy"
                                 } else {
                                     "Theme, library and reading comfort"
@@ -4185,7 +4178,7 @@ fn render_simple_screen(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> imp
         }
         Screen::Themes => {
             if app.themes.is_on_omarchy() {
-                "Omarchy is controlling the colours. This list is read-only here. Esc back"
+                "Follow Omarchy, or pick a palette just for Oma Bible. Enter apply · Esc back"
             } else {
                 "Choose a palette for the reader. Enter apply · Esc back"
             }
@@ -4211,14 +4204,17 @@ fn render_simple_screen(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> imp
                 .collect()
         }
         Screen::Themes => {
-            let cur = app.themes.active().slug.clone();
+            let current = app.themes.choice_index();
             app.themes
-                .themes()
-                .iter()
+                .choices()
+                .into_iter()
                 .enumerate()
-                .map(|(i, t)| {
-                    (
-                        format!(
+                .map(|(i, choice)| {
+                    let label = match choice {
+                        ThemeChoice::FollowOmarchy => {
+                            format!("Follow Omarchy · now {}", omarchy_theme_name(app))
+                        }
+                        ThemeChoice::Theme(t) => format!(
                             "{}{}",
                             t.name,
                             if t.mode.is_dark() {
@@ -4227,9 +4223,8 @@ fn render_simple_screen(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> imp
                                 " · light"
                             }
                         ),
-                        t.slug == cur,
-                        i == app.theme_selected,
-                    )
+                    };
+                    (label, i == current, i == app.theme_selected)
                 })
                 .collect()
         }

@@ -1,4 +1,4 @@
-use oma_bible_core::theme::Rgb;
+use oma_bible_core::theme::{Rgb, ThemeChoice, omarchy_theme_title};
 use oma_bible_core::user_data_dir;
 use ratatui::{
     Frame,
@@ -391,58 +391,60 @@ fn screen_title(screen: Screen) -> &'static str {
 
 fn render_themes(frame: &mut Frame, area: Rect, app: &App) {
     let theme = app.theme();
-    let current = app.themes.current_index();
+    let current = app.themes.choice_index();
+    let item = |active: bool, name: String, detail: String| {
+        let marker = if active { "● " } else { "  " };
+        let mut line = vec![
+            Span::styled(marker, Style::new().fg(color(theme.accent))),
+            Span::styled(
+                name,
+                Style::new()
+                    .fg(color(theme.foreground))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(detail, Style::new().fg(color(theme.muted))),
+        ];
+        if active {
+            line.push(Span::styled(
+                "  active",
+                Style::new().fg(color(theme.green)),
+            ));
+        }
+        ListItem::new(Line::from(line))
+    };
 
     let items = app
         .themes
-        .themes()
-        .iter()
+        .choices()
+        .into_iter()
         .enumerate()
-        .map(|(index, candidate)| {
-            let active = current == Some(index);
-            let marker = if active { "● " } else { "  " };
-            let mut line = vec![
-                Span::styled(marker, Style::new().fg(color(theme.accent))),
-                Span::styled(
-                    candidate.name.clone(),
-                    Style::new()
-                        .fg(color(theme.foreground))
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    format!("  {}", candidate.mode.label()),
-                    Style::new().fg(color(theme.muted)),
-                ),
-            ];
-
-            if candidate.slug != candidate.name {
-                line.push(Span::styled(
-                    format!("  ·  {}", candidate.slug),
-                    Style::new().fg(color(theme.muted)),
-                ));
+        .map(|(index, choice)| match choice {
+            ThemeChoice::FollowOmarchy => {
+                let now = if app.themes.is_following_omarchy() {
+                    Some(app.themes.active().name.clone())
+                } else {
+                    omarchy_theme_title()
+                };
+                item(
+                    index == current,
+                    "Follow Omarchy".to_string(),
+                    now.map(|name| format!("  now {name}")).unwrap_or_default(),
+                )
             }
-
-            if active {
-                line.push(Span::styled(
-                    "  active",
-                    Style::new().fg(color(theme.green)),
-                ));
+            ThemeChoice::Theme(candidate) => {
+                let mut detail = format!("  {}", candidate.mode.label());
+                if candidate.slug != candidate.name {
+                    detail.push_str(&format!("  ·  {}", candidate.slug));
+                }
+                item(index == current, candidate.name.clone(), detail)
             }
-
-            ListItem::new(Line::from(line))
         })
         .collect::<Vec<_>>();
 
-    let subtitle = if app.themes.is_on_omarchy() {
-        format!(
-            "Following the Omarchy system theme · {} theme{} discovered",
-            app.themes.themes().len(),
-            if app.themes.themes().len() == 1 {
-                ""
-            } else {
-                "s"
-            }
-        )
+    let subtitle = if app.themes.is_following_omarchy() {
+        String::from("Following the Omarchy theme · pick another to use it just here")
+    } else if app.themes.is_on_omarchy() {
+        String::from("Using a theme picked here · choose Follow Omarchy to follow the desktop")
     } else {
         String::from("Not running under Omarchy · the selected theme is remembered")
     };

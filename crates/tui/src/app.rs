@@ -207,13 +207,11 @@ impl App {
 
         app.restore_position();
 
-        if !app.themes.is_on_omarchy()
-            && let Some(slug) = app.settings.theme.clone()
-        {
-            app.themes.select_slug(&slug);
-        }
+        // A theme picked in the app wins, on Omarchy too.
+        let saved = app.settings.theme.clone();
+        app.themes.apply_saved(saved.as_deref());
 
-        app.theme_selected = app.themes.current_index().unwrap_or(0);
+        app.theme_selected = app.themes.choice_index();
         app.translation_selected = app.translation_index;
         app
     }
@@ -275,7 +273,7 @@ impl App {
     /// Follow an Omarchy theme change while the reader is running.
     pub(crate) fn refresh_theme(&mut self) {
         if self.themes.refresh_active() {
-            self.theme_selected = self.themes.current_index().unwrap_or(0);
+            self.theme_selected = self.themes.choice_index();
         }
     }
 
@@ -527,10 +525,7 @@ impl App {
         self.settings.book = book;
         self.settings.chapter = chapter;
         self.settings.verse = verse;
-
-        if !self.themes.is_on_omarchy() {
-            self.settings.theme = Some(self.themes.active().slug.clone());
-        }
+        // The theme is saved only when it is picked.
 
         if let Err(error) = self.settings.save() {
             self.message = Some(format!("Could not save settings: {error}"));
@@ -1039,23 +1034,20 @@ impl App {
 
     pub(crate) fn open_themes(&mut self, from: Screen) {
         self.theme_return = from;
-        self.theme_selected = self.themes.current_index().unwrap_or(0);
+        self.theme_selected = self.themes.choice_index();
         self.screen = Screen::Themes;
     }
 
     fn apply_theme(&mut self, index: usize) {
-        if self.themes.themes().is_empty() {
-            return;
-        }
-
-        let index = index.min(self.themes.themes().len() - 1);
-        if self.themes.select(index) {
-            if !self.themes.is_on_omarchy() {
-                self.settings.theme = Some(self.themes.active().slug.clone());
-                self.save_settings();
-            }
-            self.theme_selected = index;
-            self.message = Some(format!("Theme: {}", self.themes.active().name));
+        if let Some(saved) = self.themes.choose(index) {
+            self.settings.theme = saved;
+            self.save_settings();
+            self.theme_selected = self.themes.choice_index();
+            self.message = Some(if self.themes.is_following_omarchy() {
+                format!("Following Omarchy · {}", self.themes.active().name)
+            } else {
+                format!("Theme: {}", self.themes.active().name)
+            });
         }
 
         self.screen = self.theme_return;
@@ -1305,7 +1297,7 @@ impl App {
 
     fn screen_item_count(&self) -> usize {
         match self.screen {
-            Screen::Themes => self.themes.themes().len(),
+            Screen::Themes => self.themes.choices().len(),
             Screen::Translations => self.filtered_translations().len(),
             Screen::Download => self.filtered_remote().len(),
             Screen::Languages => self.language_options().len(),
