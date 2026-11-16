@@ -28,14 +28,7 @@ loaders, download client, settings, bookmarks, and theme catalog.
 
 ## Install
 
-**Arch / Omarchy (AUR):**
-
-```bash
-yay -S oma-bible-bin       # desktop app
-yay -S oma-bible-tui-bin   # terminal app
-```
-
-**Any Linux:** the [Releases](../../releases) page has one download per app.
+**Any Linux:** the [Releases](https://github.com/Eyasuk/oma-bible/releases) page has one download per app.
 Take one or both; they work on their own and share your library, bookmarks and
 settings when both are installed.
 
@@ -54,7 +47,7 @@ cd oma-bible-0.1.1-x86_64-linux
 no `sudo` needed. The King James Version and its study data are built into each
 app, so it works offline straight away.
 
-**Arch / Omarchy, built from source:** each app has its own PKGBUILD, so you
+**Arch / Omarchy:** build it from a clone; each app has its own PKGBUILD, so you
 can build and install either one (or both) as a proper Arch package:
 
 ```bash
@@ -65,7 +58,8 @@ cd ../oma-bible-tui                         # terminal app
 makepkg -si
 ```
 
-This needs Rust 1.92 or newer (`sudo pacman -S rust`). Remove an app again with
+`makepkg -s` installs the build tools it needs, including Rust (1.92 or
+newer). Remove an app again with
 `sudo pacman -R oma-bible` or `sudo pacman -R oma-bible-tui`.
 
 ## Run from source
@@ -94,7 +88,7 @@ in GPUI, `h` / `l` change chapters directly.
 
 | Key | Action |
 |---|---|
-| `j` / `k`, `Down` / `Up` | Previous or next verse |
+| `j` / `k`, `Down` / `Up` | Next or previous verse |
 | `h` / `l`, `Left` / `Right` | Previous or next chapter |
 | `gg` / `G`, `Home` / `End` | First or last verse |
 | `Ctrl+d` / `Ctrl+u`, `PgDn` / `PgUp` | Page down or up |
@@ -174,7 +168,7 @@ every commentary; the choice is saved), showing the section that
 covers the verse; **Footnotes** from the translation itself; and **Original**,
 the verse word by word in Hebrew or Greek. `Tab`, `h` / `l` or `1`–`4` switch
 tabs. Study data is fetched once per chapter and cached in
-`$XDG_CACHE_HOME/oma-bible` for offline use. Section headings from the
+`$XDG_CACHE_HOME/oma-bible/api` for offline use. Section headings from the
 translation appear above the verses they introduce.
 
 ### Original Hebrew and Greek words
@@ -374,15 +368,17 @@ cargo run --release -p oma-bible-bundle
 
 Releases are built by `.github/workflows/release.yml`:
 
-1. Set the version in `Cargo.toml` (`[workspace.package] version`) and commit.
+1. Set the version in `Cargo.toml` (`[workspace.package] version`) and in
+   `flake.nix`, and commit.
 2. Tag and push: `git tag -a v0.2.0 -m "Oma Bible 0.2.0" && git push origin main v0.2.0`.
 3. GitHub Actions runs the tests, builds both apps on Ubuntu 22.04 and attaches
    one download per app (`oma-bible-…` and `oma-bible-tui-…`, each with a
    `.sha256`) to a **draft** release with generated notes. The packing is
    `packaging/package.sh`, which also runs locally after `cargo build --release`.
 4. Edit the notes on GitHub and press **Publish release**.
-5. Update the AUR package from `packaging/aur/PKGBUILD` (see the comments at
-   its top).
+5. `packaging/aur/PKGBUILD` is ready for an AUR package of the prebuilt
+   downloads, but it has not been published there yet. Keep its `pkgver` and
+   checksums in step with the release (see the comments at its top).
 
 ## Checks
 
@@ -391,15 +387,6 @@ cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
-
-## Desktop frontend (GPUI)
-
-The desktop UI is built with **GPUI** and `gpui-kit/components` for a
-GPU-accelerated, Rust-native experience. The `oma-bible-gpui` crate is the
-primary desktop frontend; the shared `oma-bible-core` crate keeps data, themes,
-downloads, settings, and bookmarks consistent across the TUI and GPUI apps.
-
-The GTK frontend has been removed from the workspace as part of the switch.
 
 ## Credits and licences
 
