@@ -59,6 +59,30 @@ impl Translation {
         })
     }
 
+    /// Where the same passage sits in this translation: the book (matched by
+    /// USFM code, else by name) and the chapter with the same number, as
+    /// indices. `None` when this translation lacks the book or the chapter,
+    /// such as Genesis in a New Testament.
+    pub fn passage_indices(
+        &self,
+        book_id: Option<&str>,
+        book_name: &str,
+        chapter: u32,
+    ) -> Option<(usize, usize)> {
+        let book_index = book_id
+            .and_then(|id| self.book_index_by_id(id))
+            .or_else(|| {
+                self.books
+                    .iter()
+                    .position(|book| book.name.eq_ignore_ascii_case(book_name))
+            })?;
+        let chapter_index = self.books[book_index]
+            .chapters
+            .iter()
+            .position(|candidate| candidate.number == chapter)?;
+        Some((book_index, chapter_index))
+    }
+
     /// Reads a translation from a JSON file.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, LoadError> {
         let path = path.as_ref();
@@ -115,6 +139,34 @@ mod tests {
             Some("Genesis")
         );
         assert!(translation.book("Exodus").is_none());
+    }
+
+    #[test]
+    fn finds_the_same_passage_by_code_then_name() {
+        let translation = Translation::new(
+            "Test",
+            "English",
+            "TST",
+            vec![
+                BibleBook::new("Matthew", vec![Chapter::new(1, Vec::new())]).with_id("MAT"),
+                BibleBook::new(
+                    "John",
+                    vec![Chapter::new(1, Vec::new()), Chapter::new(3, Vec::new())],
+                )
+                .with_id("JHN"),
+            ],
+        );
+
+        assert_eq!(
+            translation.passage_indices(Some("JHN"), "Yohannes", 3),
+            Some((1, 1))
+        );
+        assert_eq!(
+            translation.passage_indices(None, "matthew", 1),
+            Some((0, 0))
+        );
+        assert_eq!(translation.passage_indices(Some("GEN"), "Genesis", 1), None);
+        assert_eq!(translation.passage_indices(Some("JHN"), "John", 2), None);
     }
 
     #[test]

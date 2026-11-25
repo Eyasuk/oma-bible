@@ -9,18 +9,24 @@
 #
 # The oma-bible next door is built the same way, separately. Remove the
 # package again with: sudo pacman -R oma-bible-tui
+#
+# This PKGBUILD is for local builds only and must not be submitted to the
+# AUR: it builds the clone it sits in (through $startdir) instead of
+# downloading a source listed in source=(). The AUR package is
+# packaging/aur/PKGBUILD.
 
 pkgname=oma-bible-tui
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
-pkgdesc="Your own quiet place to read Scripture: a native Bible reader for Linux (terminal app)"
+pkgdesc="Quiet, native Bible reader with study tools (terminal app)"
 arch=('x86_64' 'aarch64')
 url="https://github.com/Eyasuk/oma-bible"
 license=('MIT')
-depends=('glibc' 'gcc-libs')
+depends=('glibc' 'libgcc')
 makedepends=('cargo')
-provides=('oma-bible-tui')
 conflicts=('oma-bible-tui-bin')
+# Cargo's release profile already strips and uses thin LTO, so makepkg's
+# own LTO flags and an (empty) debug package add nothing.
 options=('!lto' '!debug')
 
 # The repository root: this file lives in packaging/arch/oma-bible-tui.
@@ -32,20 +38,29 @@ pkgver() {
 
 prepare() {
   cd "$_root"
-  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc --print host-tuple)"
 }
 
 build() {
   cd "$_root"
+  export RUSTUP_TOOLCHAIN=stable
   # Reuse the clone's target directory, so building again (or building the
   # other app) does not start from scratch.
   export CARGO_TARGET_DIR="$_root/target"
   cargo build --frozen --release -p oma-bible-tui
 }
 
+check() {
+  cd "$_root"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR="$_root/target"
+  cargo test --frozen -p oma-bible-core -p oma-bible-tui
+}
+
 package() {
   cd "$_root"
-  install -Dm755 target/release/oma-bible-tui          "$pkgdir/usr/bin/oma-bible-tui"
-  install -Dm644 packaging/oma-bible-tui.desktop       "$pkgdir/usr/share/applications/oma-bible-tui.desktop"
-  install -Dm644 LICENSE                       "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm755 target/release/oma-bible-tui    "$pkgdir/usr/bin/oma-bible-tui"
+  install -Dm644 packaging/oma-bible-tui.desktop "$pkgdir/usr/share/applications/oma-bible-tui.desktop"
+  install -Dm644 LICENSE                         "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

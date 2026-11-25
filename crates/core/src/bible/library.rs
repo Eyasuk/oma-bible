@@ -111,6 +111,26 @@ impl Library {
         Ok(library)
     }
 
+    /// Adds a just-downloaded translation, replacing an older copy, without
+    /// reading every other translation from disk again.
+    pub fn insert_download(&mut self, translation: Translation) {
+        self.insert(translation);
+        self.sort();
+    }
+
+    /// Index of a translation by abbreviation, ignoring ASCII letter case.
+    pub fn position(&self, abbreviation: &str) -> Option<usize> {
+        self.translations
+            .iter()
+            .position(|translation| translation.abbreviation.eq_ignore_ascii_case(abbreviation))
+    }
+
+    /// Whether a translation with this abbreviation (a catalogue id) is
+    /// already installed, so it need not be downloaded again.
+    pub fn contains(&self, abbreviation: &str) -> bool {
+        self.position(abbreviation).is_some()
+    }
+
     /// Adds a translation, replacing an existing one with the same abbreviation.
     /// Files saved before a translation was renamed get the new name.
     fn insert(&mut self, mut translation: Translation) {
@@ -183,6 +203,22 @@ mod tests {
         let library = Library::load_dir(crate::fixtures_dir()).unwrap();
 
         assert_eq!(library.translations()[0].abbreviation, "KJV");
+    }
+
+    #[test]
+    fn a_new_download_replaces_the_old_copy_and_stays_sorted() {
+        let mut library = Library::load_dir(crate::fixtures_dir()).unwrap();
+        let before = library.translations().len();
+        let kjv = library.translation("KJV").unwrap().clone();
+
+        library.insert_download(kjv);
+        assert_eq!(library.translations().len(), before);
+
+        library.insert_download(Translation::new("Aaa", "English", "AAA", Vec::new()));
+        assert_eq!(library.translations().len(), before + 1);
+        assert_eq!(library.position("aaa"), Some(0));
+        assert!(library.contains("kjv"));
+        assert!(!library.contains("NIV"));
     }
 
     #[test]

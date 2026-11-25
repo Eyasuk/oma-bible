@@ -538,7 +538,7 @@ fn render_download(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled(
                 format!(
                     "· {} downloaded · Esc cancels",
-                    format_bytes(download.control.downloaded())
+                    download.control.progress_label()
                 ),
                 Style::new().fg(color(theme.accent)),
             ),
@@ -637,6 +637,13 @@ fn render_download(frame: &mut Frame, area: Rect, app: &App) {
                 ),
                 Style::new().fg(color(theme.muted)),
             ));
+
+            if app.library.contains(&translation.id) {
+                spans.push(Span::styled(
+                    "  ·  installed",
+                    Style::new().fg(color(theme.accent)),
+                ));
+            }
 
             ListItem::new(Line::from(spans))
         })
@@ -856,7 +863,11 @@ fn render_help(frame: &mut Frame, area: Rect, app: &App) {
         ("x", "Remove the selected bookmark"),
         ("M", "Edit the selected bookmark's note"),
         ("API", "Add a translation"),
-        ("j / k, Enter", "Select and download a translation"),
+        (
+            "j / k, Enter",
+            "Download a translation, or open it when installed",
+        ),
+        ("u", "Download an installed translation again"),
         ("/ / l / r", "Search · language filter · refresh"),
         ("Esc", "Cancel a download or leave the screen"),
     ] {
@@ -925,7 +936,7 @@ fn render_screen_footer(frame: &mut Frame, area: Rect, app: &App) {
             if app.download.is_some() {
                 "Esc cancel"
             } else {
-                "j/k move · Enter download · / search · l filter language · r refresh · Esc back"
+                "j/k move · Enter download/open · u download again · / search · l language · r refresh · Esc back"
             }
         }
         Screen::Languages => "j/k move · Enter select · / search · Esc back",
@@ -992,18 +1003,5 @@ fn language_filter_label(app: &App) -> String {
                     .map(|language| language.name)
             })
             .unwrap_or_else(|| code.clone()),
-    }
-}
-
-fn format_bytes(bytes: u64) -> String {
-    const KIB: u64 = 1024;
-    const MIB: u64 = KIB * 1024;
-
-    if bytes >= MIB {
-        format!("{:.1} MiB", bytes as f64 / MIB as f64)
-    } else if bytes >= KIB {
-        format!("{:.1} KiB", bytes as f64 / KIB as f64)
-    } else {
-        format!("{bytes} B")
     }
 }

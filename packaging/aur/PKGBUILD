@@ -11,23 +11,29 @@
 #   updpkgsums && makepkg -si
 #   makepkg --printsrcinfo > .SRCINFO
 #   git commit -am "Update to <version>" && git push
+#
+# The checksums below must be filled in by updpkgsums once the v$pkgver
+# release assets exist; never push SKIP to the AUR.
 
 pkgbase=oma-bible-bin
 pkgname=('oma-bible-bin' 'oma-bible-tui-bin')
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
+pkgdesc="Quiet, native Bible reader with study tools"
 arch=('x86_64')
 url="https://github.com/Eyasuk/oma-bible"
 license=('MIT')
 options=('!strip' '!debug')
 source=("$url/releases/download/v$pkgver/oma-bible-$pkgver-x86_64-linux.tar.gz"
         "$url/releases/download/v$pkgver/oma-bible-tui-$pkgver-x86_64-linux.tar.gz")
-sha256sums=('5c90e79a9a3ab81cb4207e3eba7199fd4ba38ca8996ae408f57317d4a26e620b'
-            'c0be7c232b1d1bdea8c4c01e28ed8abdcf64f210119d5bd853a65a78728495cf')
+sha256sums=('SKIP'
+            'SKIP')
 
 package_oma-bible-bin() {
-  pkgdesc="Your own quiet place to read Scripture: a native Bible reader for Linux (desktop app)"
-  depends=('glibc' 'libxkbcommon' 'libxkbcommon-x11' 'libxcb')
+  pkgdesc="Quiet, native Bible reader with study tools (desktop app)"
+  # Linked: glibc, libgcc, libxcb, libxkbcommon(-x11). Loaded at run time:
+  # libwayland-client/-egl (wayland) and libEGL (libglvnd).
+  depends=('glibc' 'libgcc' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'wayland' 'libglvnd')
   provides=('oma-bible')
   conflicts=('oma-bible')
   cd "oma-bible-$pkgver-x86_64-linux"
@@ -37,8 +43,8 @@ package_oma-bible-bin() {
 }
 
 package_oma-bible-tui-bin() {
-  pkgdesc="Your own quiet place to read Scripture: a native Bible reader for Linux (terminal app)"
-  depends=('glibc')
+  pkgdesc="Quiet, native Bible reader with study tools (terminal app)"
+  depends=('glibc' 'libgcc')
   provides=('oma-bible-tui')
   conflicts=('oma-bible-tui')
   cd "oma-bible-tui-$pkgver-x86_64-linux"

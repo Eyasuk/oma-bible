@@ -669,7 +669,7 @@ fn references_body(
 ) -> AnyElement {
     if target.book_id.is_none() {
         return message(
-            "This translation does not say which book this is. Download it again to see cross-references.",
+            "This translation does not say which book this is. Download it again (u in Downloads) to see cross-references.",
             cx,
         );
     }
@@ -747,7 +747,7 @@ fn commentary_body(
 ) -> AnyElement {
     let Some(book) = target.book_id.clone() else {
         return message(
-            "This translation does not say which book this is. Download it again to see commentaries.",
+            "This translation does not say which book this is. Download it again (u in Downloads) to see commentaries.",
             cx,
         );
     };
@@ -852,7 +852,7 @@ fn paragraphs(text: &str, cx: &App) -> Vec<AnyElement> {
 fn footnotes_body(footnotes: &[String], cx: &App) -> AnyElement {
     if footnotes.is_empty() {
         return message(
-            "No footnotes on this verse in this translation. Translations downloaded before this update need downloading again to show footnotes.",
+            "No footnotes on this verse in this translation. Translations downloaded before this update need downloading again (u in Downloads) to show footnotes.",
             cx,
         );
     }
@@ -882,7 +882,7 @@ fn original_body(
 ) -> AnyElement {
     if target.book_id.is_none() {
         return message(
-            "This translation does not say which book this is. Download it again to see the original words.",
+            "This translation does not say which book this is. Download it again (u in Downloads) to see the original words.",
             cx,
         );
     }

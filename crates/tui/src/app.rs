@@ -23,7 +23,7 @@ pub(crate) enum WorkerMessage {
 
 pub(crate) struct DownloadDone {
     pub id: String,
-    pub name: String,
+    pub translation: Translation,
     pub font_notice: Option<String>,
 }
 
@@ -302,15 +302,42 @@ impl App {
         ))
     }
 
+    /// Switches translation and stays on the same passage when the new
+    /// translation has it, so switching away and back keeps your place.
     pub(crate) fn set_translation(&mut self, index: usize) {
         if self.library.translations().is_empty() {
             return;
         }
 
+        let passage = self
+            .translation()
+            .zip(self.chapter())
+            .map(|(translation, chapter)| {
+                (
+                    translation.book_id(self.book_index),
+                    translation.books[self.book_index].name.clone(),
+                    chapter.number,
+                )
+            });
+
         self.translation_index = index.min(self.library.translations().len() - 1);
-        self.book_index = 0;
-        self.chapter_index = 0;
-        self.verse_index = 0;
+        let found = passage.and_then(|(book_id, book_name, chapter)| {
+            self.translation()?
+                .passage_indices(book_id.as_deref(), &book_name, chapter)
+        });
+        match found {
+            Some((book_index, chapter_index)) => {
+                self.book_index = book_index;
+                self.chapter_index = chapter_index;
+                let verses = self.chapter().map_or(0, |chapter| chapter.verses.len());
+                self.verse_index = self.verse_index.min(verses.saturating_sub(1));
+            }
+            None => {
+                self.book_index = 0;
+                self.chapter_index = 0;
+                self.verse_index = 0;
+            }
+        }
         self.scroll = 0;
         self.clear_search();
     }
@@ -647,6 +674,7 @@ impl App {
             KeyCode::Enter => self.activate_screen_item(),
             KeyCode::Char('/') => self.open_screen_filter(),
             KeyCode::Char('r') if self.screen == Screen::Download => self.refresh_catalog(),
+            KeyCode::Char('u') if self.screen == Screen::Download => self.start_download(true),
             KeyCode::Char('l') if self.screen == Screen::Download => self.open_languages(),
             KeyCode::Char('d') | KeyCode::Char('D') if self.screen == Screen::Translations => {
                 self.open_download(Screen::Translations);
@@ -671,7 +699,7 @@ impl App {
         match self.screen {
             Screen::Themes => self.apply_theme(self.theme_selected),
             Screen::Translations => self.activate_translation(),
-            Screen::Download => self.start_selected_download(),
+            Screen::Download => self.start_download(false),
             Screen::Languages => self.apply_language(),
             Screen::Study => self.jump_to_selected_bookmark(),
             Screen::Settings => self.activate_setting(),
@@ -1123,7 +1151,9 @@ impl App {
         });
     }
 
-    fn start_selected_download(&mut self) {
+    /// Downloads the selected catalogue entry. One that is already installed
+    /// is opened instead, unless `again` asks for a fresh copy.
+    fn start_download(&mut self, again: bool) {
         if self.download.is_some() {
             return;
         }
@@ -1136,6 +1166,16 @@ impl App {
             self.message = Some(String::from("Choose a translation first"));
             return;
         };
+
+        if !again && let Some(index) = self.library.position(&id) {
+            self.set_translation(index);
+            self.screen = Screen::Reader;
+            self.save_position();
+            self.message = Some(format!(
+                "Reading {name}, already downloaded  ·  u in Downloads fetches it again"
+            ));
+            return;
+        }
 
         let control = DownloadControl::new();
         self.download = Some(DownloadState {
@@ -1153,7 +1193,7 @@ impl App {
                     let font_notice = fonts::prepare_for_text(&sample, true);
                     Ok(DownloadDone {
                         id: id.clone(),
-                        name: translation.name,
+                        translation,
                         font_notice,
                     })
                 })
@@ -1185,19 +1225,27 @@ impl App {
 
                     match result {
                         Ok(done) => {
-                            self.library = Library::load_default();
+                            let name = done.translation.name.clone();
+                            let abbreviation = done.translation.abbreviation.clone();
+                            // Inserting re-sorts the library: keep pointing at
+                            // the translation being read while it moves.
+                            let reading = self
+                                .translation()
+                                .map(|translation| translation.abbreviation.clone());
+                            self.library.insert_download(done.translation);
                             if let Some(index) =
-                                self.library.translations().iter().position(|translation| {
-                                    translation.abbreviation.eq_ignore_ascii_case(&done.id)
-                                })
+                                reading.and_then(|reading| self.library.position(&reading))
                             {
+                                self.translation_index = index;
+                            }
+                            if let Some(index) = self.library.position(&abbreviation) {
                                 self.set_translation(index);
                             }
                             self.screen = Screen::Reader;
                             self.save_position();
                             let mut message = format!(
                                 "Added {} from {}",
-                                done.name,
+                                name,
                                 oma_bible_core::remote::source_name(&done.id)
                             );
                             if let Some(notice) = done.font_notice {
@@ -1412,6 +1460,49 @@ mod tests {
         assert_eq!(step(2, 1, 3), 2);
         assert_eq!(step(1, 1, 3), 2);
         assert_eq!(step(0, -1, 0), 0);
+    }
+
+    #[test]
+    fn switching_translations_keeps_the_passage() {
+        let mut library = sample_library();
+        library.add(Translation::new(
+            "Third",
+            "English",
+            "THD",
+            vec![BibleBook::new(
+                "Exodus",
+                vec![Chapter::new(1, vec![String::from("a"), String::from("b")])],
+            )],
+        ));
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let mut app = App::new(
+            library,
+            ThemeCatalog::fallback_only(),
+            Settings::default(),
+            Bookmarks::default(),
+            sender,
+            receiver,
+        );
+        app.translation_index = 0;
+        app.book_index = 1;
+        app.chapter_index = 0;
+        app.verse_index = 0;
+
+        // Exodus 1 exists in the third translation.
+        app.set_translation(2);
+        assert_eq!((app.book_index, app.chapter_index), (0, 0));
+        assert_eq!(app.book().unwrap().name, "Exodus");
+
+        // And back again lands on Exodus 1, not Genesis 1.
+        app.set_translation(0);
+        assert_eq!(app.book().unwrap().name, "Exodus");
+
+        // A translation without the passage starts from the top.
+        app.set_translation(1);
+        assert_eq!(
+            (app.book_index, app.chapter_index, app.verse_index),
+            (0, 0, 0)
+        );
     }
 
     #[test]

@@ -253,6 +253,8 @@ impl RemoteCatalog {
 pub struct DownloadControl {
     cancelled: Arc<AtomicBool>,
     downloaded: Arc<AtomicU64>,
+    /// Size announced by the server; 0 while unknown.
+    total: Arc<AtomicU64>,
 }
 
 impl DownloadControl {
@@ -272,9 +274,43 @@ impl DownloadControl {
         self.downloaded.load(Ordering::Relaxed)
     }
 
+    /// The full size of the download, when the server announced it.
+    pub fn total(&self) -> Option<u64> {
+        match self.total.load(Ordering::Relaxed) {
+            0 => None,
+            total => Some(total),
+        }
+    }
+
+    /// Progress for the status line: `3.2 MB of 4.6 MB`, or `3.2 MB` when
+    /// the full size is unknown.
+    pub fn progress_label(&self) -> String {
+        let downloaded = self.downloaded();
+        match self.total() {
+            Some(total) if total >= downloaded => {
+                format!(
+                    "{} of {}",
+                    format_megabytes(downloaded),
+                    format_megabytes(total)
+                )
+            }
+            _ => format_megabytes(downloaded),
+        }
+    }
+
     fn add_downloaded(&self, bytes: u64) {
         self.downloaded.fetch_add(bytes, Ordering::Relaxed);
     }
+
+    fn set_total(&self, bytes: Option<u64>) {
+        self.total.store(bytes.unwrap_or(0), Ordering::Relaxed);
+    }
+}
+
+/// A byte count in megabytes with one decimal, such as `4.6 MB`.
+pub fn format_megabytes(bytes: u64) -> String {
+    const MEGABYTE: f64 = 1_000_000.0;
+    format!("{:.1} MB", bytes as f64 / MEGABYTE)
 }
 
 /// Downloads a complete translation: from the Bible API in the simplified
@@ -327,6 +363,7 @@ fn extra_translations() -> Vec<RemoteTranslation> {
 fn fetch_bytes(url: &str, control: &DownloadControl) -> Result<Vec<u8>, RemoteError> {
     let mut response = client()?.get(url).send()?;
     response = check_status(response, url)?;
+    control.set_total(response.content_length());
 
     let mut contents = Vec::new();
     let mut buffer = [0u8; 64 * 1024];
@@ -894,6 +931,18 @@ mod tests {
         assert!(!control.is_cancelled());
         control.cancel();
         assert!(control.is_cancelled());
+    }
+
+    #[test]
+    fn progress_is_shown_in_megabytes() {
+        assert_eq!(format_megabytes(0), "0.0 MB");
+        assert_eq!(format_megabytes(4_560_000), "4.6 MB");
+
+        let control = DownloadControl::new();
+        control.add_downloaded(1_260_000);
+        assert_eq!(control.progress_label(), "1.3 MB");
+        control.set_total(Some(5_000_000));
+        assert_eq!(control.progress_label(), "1.3 MB of 5.0 MB");
     }
 
     #[test]

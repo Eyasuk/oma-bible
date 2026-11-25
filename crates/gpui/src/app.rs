@@ -134,7 +134,7 @@ pub enum WorkerMessage {
 
 pub struct DownloadDone {
     pub id: String,
-    pub name: String,
+    pub translation: Translation,
     pub font_notice: Option<String>,
 }
 
@@ -238,6 +238,8 @@ pub struct OmaBibleApp {
     pub catalog_loading: bool,
     pub catalog_error: Option<String>,
     pub download: Option<DownloadState>,
+    /// A ticker is redrawing while a worker thread is busy.
+    worker_watch: bool,
 
     pub theme_return: Screen,
     pub translation_return: Screen,
@@ -346,6 +348,7 @@ impl OmaBibleApp {
             catalog_loading: false,
             catalog_error: None,
             download: None,
+            worker_watch: false,
             theme_return: Screen::Reader,
             translation_return: Screen::Reader,
             download_return: Screen::Reader,
@@ -732,6 +735,42 @@ impl OmaBibleApp {
         self.search_query.clear();
         self.search_matches.clear();
         self.search_index = 0;
+    }
+
+    /// Switches translation and stays on the same passage when the new
+    /// translation has it, so switching away and back keeps your place.
+    fn switch_translation(&mut self, index: usize) {
+        if self.library.translations().is_empty() {
+            return;
+        }
+        let passage = self.translation().zip(self.chapter()).map(|(t, c)| {
+            (
+                t.book_id(self.book_index),
+                t.books[self.book_index].name.clone(),
+                c.number,
+            )
+        });
+        self.translation_index = index.min(self.library.translations().len() - 1);
+        self.translation_selected = self.translation_index;
+        let found = passage.and_then(|(id, name, chapter)| {
+            self.translation()?
+                .passage_indices(id.as_deref(), &name, chapter)
+        });
+        match found {
+            Some((book, chapter)) => {
+                self.book_index = book;
+                self.chapter_index = chapter;
+            }
+            None => {
+                self.book_index = 0;
+                self.chapter_index = 0;
+                self.verse_index = 0;
+            }
+        }
+        self.clamp_indices();
+        self.clear_search();
+        self.clear_visual();
+        self.scroll_to_verse(self.verse_index);
     }
 
     fn select_book(&mut self, delta: isize) {
@@ -1434,18 +1473,9 @@ impl OmaBibleApp {
                     .get(self.translation_selected)
                     .map(|t| t.abbreviation.clone());
                 if let Some(abbr) = abbr
-                    && let Some(i) = self
-                        .library
-                        .translations()
-                        .iter()
-                        .position(|t| t.abbreviation == abbr)
+                    && let Some(i) = self.library.position(&abbr)
                 {
-                    self.translation_index = i;
-                    self.translation_selected = i;
-                    self.book_index = 0;
-                    self.chapter_index = 0;
-                    self.verse_index = 0;
-                    self.clear_search();
+                    self.switch_translation(i);
                     self.save_position();
                     self.status = format!(
                         "Reading {}",
@@ -1457,7 +1487,7 @@ impl OmaBibleApp {
                 }
                 self.screen = self.translation_return;
             }
-            Screen::Downloads => self.start_selected_download(cx),
+            Screen::Downloads => self.start_download(false, cx),
             Screen::Languages => {
                 let opts = self.language_options();
                 if let Some((code, _, _)) = opts.get(self.language_selected) {
@@ -2252,7 +2282,43 @@ impl OmaBibleApp {
             let r = RemoteCatalog::fetch().map_err(|e| e.to_string());
             let _ = tx.send(WorkerMessage::Catalog(r));
         });
+        self.watch_worker(cx);
         cx.notify();
+    }
+
+    /// Worker results are collected while rendering, and nothing renders
+    /// without input. Tick while a worker is busy so progress updates and a
+    /// finished download shows without the mouse having to move.
+    fn watch_worker(&mut self, cx: &mut Context<Self>) {
+        if self.worker_watch {
+            return;
+        }
+        self.worker_watch = true;
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(250))
+                    .await;
+                let Ok(busy) = this.update(cx, |this, cx| {
+                    this.poll_worker(cx);
+                    let busy = this.catalog_loading || this.download.is_some();
+                    if this.download.is_some() {
+                        // Progress counter.
+                        cx.notify();
+                    }
+                    if !busy {
+                        this.worker_watch = false;
+                    }
+                    busy
+                }) else {
+                    break;
+                };
+                if !busy {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
     pub fn refresh_catalog(&mut self, cx: &mut Context<Self>) {
         if self.catalog_loading {
@@ -2262,10 +2328,9 @@ impl OmaBibleApp {
         self.catalog_error = None;
         self.fetch_catalog(cx);
     }
-    fn start_selected_download(&mut self, cx: &mut Context<Self>) {
-        if self.download.is_some() {
-            return;
-        }
+    /// Downloads the selected catalogue entry. One that is already installed
+    /// is opened instead, unless `again` asks for a fresh copy.
+    fn start_download(&mut self, again: bool, cx: &mut Context<Self>) {
         let sel = self
             .filtered_remote()
             .get(self.download_selected)
@@ -2274,6 +2339,21 @@ impl OmaBibleApp {
             self.set_status("Choose a translation first", cx);
             return;
         };
+        if !again && let Some(i) = self.library.position(&id) {
+            self.switch_translation(i);
+            self.save_position();
+            self.screen = Screen::Reader;
+            self.set_status(
+                format!("Reading {name}, already downloaded · u in Downloads fetches it again"),
+                cx,
+            );
+            return;
+        }
+        if let Some(busy) = &self.download {
+            let msg = format!("Still downloading {} · Esc cancels it", busy.name);
+            self.set_status(msg, cx);
+            return;
+        }
         let control = DownloadControl::new();
         self.download = Some(DownloadState {
             id: id.clone(),
@@ -2290,13 +2370,14 @@ impl OmaBibleApp {
                     let font_notice = fonts::prepare_for_text(&sample, true);
                     Ok(DownloadDone {
                         id: id.clone(),
-                        name: tr.name,
+                        translation: tr,
                         font_notice,
                     })
                 })
                 .map_err(|e| e.to_string());
             let _ = tx.send(WorkerMessage::Download(r));
         });
+        self.watch_worker(cx);
         cx.notify();
     }
 
@@ -2324,25 +2405,21 @@ impl OmaBibleApp {
                     self.download = None;
                     match r {
                         Ok(done) => {
-                            self.library = Library::load_default();
-                            if let Some(i) = self
-                                .library
-                                .translations()
-                                .iter()
-                                .position(|t| t.abbreviation.eq_ignore_ascii_case(&done.id))
-                            {
+                            let name = done.translation.name.clone();
+                            let abbr = done.translation.abbreviation.clone();
+                            // Inserting re-sorts the library: keep pointing at
+                            // the translation being read while it moves.
+                            let reading = self.translation().map(|t| t.abbreviation.clone());
+                            self.library.insert_download(done.translation);
+                            if let Some(i) = reading.and_then(|r| self.library.position(&r)) {
                                 self.translation_index = i;
-                                self.book_index = 0;
-                                self.chapter_index = 0;
-                                self.verse_index = 0;
-                                self.translation_selected = i;
+                            }
+                            if let Some(i) = self.library.position(&abbr) {
+                                self.switch_translation(i);
                             }
                             self.save_position();
-                            let mut msg = format!(
-                                "Added {} from {}",
-                                done.name,
-                                remote::source_name(&done.id)
-                            );
+                            let mut msg =
+                                format!("Added {} from {}", name, remote::source_name(&done.id));
                             if let Some(n) = done.font_notice {
                                 msg.push_str(" · ");
                                 msg.push_str(&n);
@@ -2719,6 +2796,7 @@ impl OmaBibleApp {
             }
             "x" if self.screen == Screen::Study => self.remove_selected_bookmark(cx),
             "r" if self.screen == Screen::Downloads => self.refresh_catalog(cx),
+            "u" if !ctrl && self.screen == Screen::Downloads => self.start_download(true, cx),
             _ => {}
         }
     }
@@ -4168,7 +4246,7 @@ fn render_simple_screen(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> imp
     let title = app.screen_title();
     let subtitle = match app.screen {
         Screen::Downloads => {
-            "The Free Use Bible API catalogue. / filter · l language · r refresh · Enter download · Esc back"
+            "The Free Use Bible API catalogue. / filter · l language · r refresh · Enter download or open · u download again · Esc back"
         }
         Screen::Languages => {
             "Choose a language for the download catalogue. / filter · Enter apply · Esc back"
@@ -4243,9 +4321,9 @@ fn render_simple_screen(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> imp
                 if let Some(d) = &app.download {
                     rows.push((
                         format!(
-                            "Downloading {} ({} bytes received) · Esc to cancel",
+                            "Downloading {} · {} · Esc to cancel",
                             d.name,
-                            d.control.downloaded()
+                            d.control.progress_label()
                         ),
                         true,
                         false,
@@ -4261,6 +4339,8 @@ fn render_simple_screen(app: &OmaBibleApp, cx: &mut Context<OmaBibleApp>) -> imp
                             t.id,
                             if downloading == Some(t.id.as_str()) {
                                 " · downloading"
+                            } else if app.library.contains(&t.id) {
+                                " · installed"
                             } else {
                                 ""
                             }

@@ -38,8 +38,8 @@ settings when both are installed.
 | `oma-bible-tui-<version>-x86_64-linux.tar.gz` | `oma-bible-tui` | The terminal app |
 
 ```bash
-tar -xzf oma-bible-0.1.1-x86_64-linux.tar.gz
-cd oma-bible-0.1.1-x86_64-linux
+tar -xzf oma-bible-0.1.2-x86_64-linux.tar.gz
+cd oma-bible-0.1.2-x86_64-linux
 ./install.sh
 ```
 
@@ -59,7 +59,8 @@ makepkg -si
 ```
 
 `makepkg -s` installs the build tools it needs, including Rust (1.92 or
-newer). Remove an app again with
+newer). The build uses the `stable` toolchain; if you use rustup, run
+`rustup update stable` first so it is new enough. Remove an app again with
 `sudo pacman -R oma-bible` or `sudo pacman -R oma-bible-tui`.
 
 ## Run from source
@@ -211,8 +212,14 @@ Inside the study panel: `j` / `k` select a bookmark, `Enter` jumps to it, `x`
 or `Delete` removes it, and `M` opens its notes.
 
 Inside the Bible API browser: `j` / `k` select a translation, `Enter`
-downloads it, `/` searches, `l` changes the language filter, `r` refreshes the
-catalogue, and `Esc` cancels an in-progress download or closes the screen.
+downloads it (or opens it, when it is already installed), `u` downloads an
+installed translation again, `/` searches, `l` changes the language filter, `r`
+refreshes the catalogue, and `Esc` cancels an in-progress download or closes the
+screen. Installed translations are marked in the list, and download progress is
+shown in megabytes.
+
+Switching translations keeps your place: the reader stays on the same book,
+chapter and verse when the new translation has them.
 
 ### Fonts for downloaded languages
 
@@ -297,7 +304,7 @@ Bible, Old and New Testament. It is not from the API: it is downloaded from
 ("2-3"); the reader labels those as ranges. Psalm titles show as headings.
 
 Translations downloaded before book codes, headings and footnotes were added
-still read normally; download them again to get cross-references for unusual
+still read normally; download them again (`u` in the browser) to get cross-references for unusual
 book layouts, headings and footnotes.
 
 ## Data
