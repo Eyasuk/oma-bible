@@ -26,8 +26,8 @@ license=('MIT')
 options=('!strip' '!debug')
 source=("$url/releases/download/v$pkgver/oma-bible-$pkgver-x86_64-linux.tar.gz"
         "$url/releases/download/v$pkgver/oma-bible-tui-$pkgver-x86_64-linux.tar.gz")
-sha256sums=('SKIP'
-            'SKIP')
+sha256sums=('5d0f6411507ae6ce8a98b50910e2474a6d2b54b49d70e623d551da5a99c9c9ec'
+            '477d44bab021d78a289c394404ca0b4477a31c244cfe65206a432290468f115c')
 
 package_oma-bible-bin() {
   pkgdesc="Quiet, native Bible reader with study tools (desktop app)"

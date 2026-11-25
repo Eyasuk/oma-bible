@@ -1,0 +1,32 @@
+pkgbase = oma-bible-bin
+	pkgdesc = Quiet, native Bible reader with study tools
+	pkgver = 0.1.2
+	pkgrel = 1
+	url = https://github.com/Eyasuk/oma-bible
+	arch = x86_64
+	license = MIT
+	options = !strip
+	options = !debug
+	source = https://github.com/Eyasuk/oma-bible/releases/download/v0.1.2/oma-bible-0.1.2-x86_64-linux.tar.gz
+	source = https://github.com/Eyasuk/oma-bible/releases/download/v0.1.2/oma-bible-tui-0.1.2-x86_64-linux.tar.gz
+	sha256sums = 5d0f6411507ae6ce8a98b50910e2474a6d2b54b49d70e623d551da5a99c9c9ec
+	sha256sums = 477d44bab021d78a289c394404ca0b4477a31c244cfe65206a432290468f115c
+
+pkgname = oma-bible-bin
+	pkgdesc = Quiet, native Bible reader with study tools (desktop app)
+	depends = glibc
+	depends = libgcc
+	depends = libxcb
+	depends = libxkbcommon
+	depends = libxkbcommon-x11
+	depends = wayland
+	depends = libglvnd
+	provides = oma-bible
+	conflicts = oma-bible
+
+pkgname = oma-bible-tui-bin
+	pkgdesc = Quiet, native Bible reader with study tools (terminal app)
+	depends = glibc
+	depends = libgcc
+	provides = oma-bible-tui
+	conflicts = oma-bible-tui
